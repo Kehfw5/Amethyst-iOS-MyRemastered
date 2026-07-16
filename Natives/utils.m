@@ -103,6 +103,10 @@ NSError* saveJSONToFile(NSDictionary *dict, NSString *path) {
     return nil;
 }
 
+void dismissModalViewController(UIViewController *viewController) {
+    [viewController dismissViewControllerAnimated:YES completion:nil];
+}
+
 NSString* localize(NSString* key, NSString* comment) {
     NSString *value = NSLocalizedString(key, nil);
     if (![NSLocale.preferredLanguages[0] isEqualToString:@"en"] && [value isEqualToString:key]) {
