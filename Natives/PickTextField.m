@@ -1,4 +1,5 @@
 #import "PickTextField.h"
+#import "UIKit+hook.h"
 #import "utils.h"
 
 @interface PickViewController : UIViewController
@@ -8,7 +9,7 @@
 @implementation PickViewController
 - (void)loadView {
     [super loadView];
-    [self.view addSubview:self.textField.inputAccessoryView];
+    if(self.textField.inputAccessoryView) [self.view addSubview:self.textField.inputAccessoryView];
     [self.view addSubview:self.textField.inputView];
 }
 
@@ -19,19 +20,20 @@
         self.view.safeAreaInsets.top,
         MIN(self.view.frame.size.width - self.view.safeAreaInsets.right, self.preferredContentSize.width),
         MIN(self.view.frame.size.height - self.view.safeAreaInsets.bottom, self.preferredContentSize.height));
-    self.textField.inputAccessoryView.frame = CGRectMake(frame.origin.x, frame.origin.y, frame.size.width, self.textField.inputAccessoryView.frame.size.height);
-    self.textField.inputView.frame = CGRectMake(frame.origin.x, CGRectGetMaxY(self.textField.inputAccessoryView.frame), frame.size.width, frame.size.height - CGRectGetMaxY(self.inputAccessoryView.frame));
+    CGRect accessoryFrame = CGRectMake(frame.origin.x, frame.origin.y, frame.size.width, self.textField.inputAccessoryView.frame.size.height);
+    self.textField.inputAccessoryView.frame = accessoryFrame;
+    self.textField.inputView.frame = CGRectMake(frame.origin.x, CGRectGetMaxY(accessoryFrame), frame.size.width, frame.size.height - CGRectGetMaxY(self.inputAccessoryView.frame));
 }
 
 - (void)viewDidDisappear:(BOOL)animated {
     [super viewDidDisappear:animated];
     [self.textField.delegate textFieldDidEndEditing:self.textField];
 }
-
 @end
 
 @interface PickTextField()
 @property(nonatomic) PickViewController *vc;
+@property(nonatomic) UIButton *doneButton;
 @end
 
 @implementation PickTextField
@@ -48,14 +50,34 @@
     return nil;
 }
 
+- (BOOL)prefersPopoverPresentation {
+    BOOL hasLiquidGlass = _UISolariumEnabled && _UISolariumEnabled();
+    return hasLiquidGlass || NSProcessInfo.processInfo.isMacCatalystApp;
+}
+
+- (void)setupDoneButtonWithTarget:(id)target action:(SEL)action {
+    if (self.prefersPopoverPresentation) return;
+    UIToolbar *toolbar = (id)self.inputAccessoryView;
+    if (!toolbar) {
+        UIBarButtonItem *btnFlexibleSpace = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemFlexibleSpace target:nil action:nil];
+        toolbar = [[UIToolbar alloc] initWithFrame:CGRectMake(0.0, 0.0, self.frame.size.width, 44.0)];
+        toolbar.items = @[btnFlexibleSpace];
+        self.inputAccessoryView = toolbar;
+    }
+    UIBarButtonItem *editDoneButton = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone target:target action:action];
+    toolbar.items = [toolbar.items arrayByAddingObject:editDoneButton];
+}
+
 - (BOOL)becomeFirstResponder {
-    if (!NSProcessInfo.processInfo.isMacCatalystApp) {
+    // iOS 26 uses popover aswell
+    if (!self.prefersPopoverPresentation) {
         return [super becomeFirstResponder];
     }
 
     self.vc = [[PickViewController alloc] init];
     self.vc.modalPresentationStyle = UIModalPresentationPopover;
-    self.vc.preferredContentSize = CGSizeMake(500, 250);
+    CGFloat width = MIN(400, MIN(self.window.frame.size.width, self.window.frame.size.height));
+    self.vc.preferredContentSize = CGSizeMake(width, 250);
     self.vc.textField = self;
 
     UIPopoverPresentationController *popoverController = [self.vc popoverPresentationController];
@@ -67,6 +89,9 @@
         showingVC = (id)showingVC.nextResponder;
     }
     [showingVC presentViewController:self.vc animated:YES completion:nil];
+    if([self.delegate respondsToSelector:@selector(textFieldDidBeginEditing:)]) {
+        [self.delegate textFieldDidBeginEditing:self];
+    }
 
     return YES;
 }
@@ -77,6 +102,9 @@
     }
 
     [self.vc dismissViewControllerAnimated:YES completion:NULL];
+    if([self.delegate respondsToSelector:@selector(textFieldDidEndEditing:)]) {
+        [self.delegate textFieldDidEndEditing:self];
+    }
     self.vc = nil;
     return YES;
 }

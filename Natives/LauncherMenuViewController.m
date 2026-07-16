@@ -159,6 +159,7 @@
     NSIndexPath *indexPath = [NSIndexPath indexPathForRow:initialIndex inSection:0];
     [self.tableView selectRowAtIndexPath:indexPath animated:YES scrollPosition:UITableViewScrollPositionNone];
     [self tableView:self.tableView didSelectRowAtIndexPath:indexPath];
+    self.lastSelectedIndex = 1;
     
     // 获取当前应用版本
     NSString *currentVersion = [[[NSBundle mainBundle] infoDictionary] objectForKey:@"CFBundleShortVersionString"];
@@ -277,6 +278,8 @@
         if (isJITEnabled(false)) {
             [self displayProgress:localize(@"login.jit.enabled", nil)];
             [self displayProgress:nil];
+        } else if (@available(iOS 17.0, *)) {
+            // enabling JIT for 17.0+ is done when we actually launch the game
         } else {
             [self enableJITWithAltKit];
         }

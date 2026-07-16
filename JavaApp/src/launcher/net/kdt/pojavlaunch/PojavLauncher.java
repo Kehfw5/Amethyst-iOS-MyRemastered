@@ -61,18 +61,6 @@ public class PojavLauncher {
 
         String sizeStr = System.getProperty("cacio.managed.screensize");
         System.setProperty("glfw.windowSize", sizeStr);
-        String[] size = sizeStr.split("x");
-        MCOptionUtils.load();
-        MCOptionUtils.set("fullscreen", "false");
-        MCOptionUtils.set("overrideWidth", size[0]);
-        MCOptionUtils.set("overrideHeight", size[1]);
-        // Default settings for performance
-        MCOptionUtils.setDefault("mipmapLevels", "0");
-        MCOptionUtils.setDefault("particles", "1");
-        MCOptionUtils.setDefault("renderDistance", "2");
-        MCOptionUtils.setDefault("simulationDistance", "5");
-        
-        MCOptionUtils.save();
 
         // Setup Forge splash.properties
         File forgeSplashFile = new File(Tools.DIR_GAME_NEW, "config/splash.properties");
@@ -91,19 +79,6 @@ public class PojavLauncher {
         JMinecraftVersionList.Version version = Tools.getVersionInfo(args[1]);
         System.out.println("Launching Minecraft " + version.id);
         
-        // Set language to Chinese on first launch
-        // For Minecraft 1.11 and later: zh_cn (lowercase)
-        // For Minecraft 1.6 to 1.10: zh_CN (uppercase)
-        // For Minecraft 1.1 to 1.5: zh_CN (uppercase, lowercase crashes)
-        MCOptionUtils.load();
-        String minecraftVersion = version.id;
-        if (minecraftVersion.compareTo("1.11") >= 0) {
-            MCOptionUtils.setDefault("lang", "zh_cn");
-        } else if (minecraftVersion.compareTo("1.1") >= 0) {
-            MCOptionUtils.setDefault("lang", "zh_CN");
-        }
-        // For Minecraft 1.0 and earlier, no language option
-        MCOptionUtils.save();
         String configPath;
         if (version.logging != null) {
             if (version.logging.client.file.id.equals("client-1.12.xml")) {

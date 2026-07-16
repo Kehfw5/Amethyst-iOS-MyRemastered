@@ -10,6 +10,7 @@
 #import <UIKit/UIKit.h>
 #import "AppDelegate.h"
 #import "SurfaceViewController.h"
+#import "MinecraftOptionUtils.h"
 
 #include <assert.h>
 #include <dlfcn.h>
@@ -137,6 +138,19 @@ void CTCDesktopPeer_openGlobal(JNIEnv *env, jclass clazz, jstring path) {
     (*env)->ReleaseStringUTFChars(env, path, stringChars);
 }
 
+void hackFix18LWJGL(void *addr) {
+    addr = (void *)((uintptr_t)addr & ~PAGE_MASK);
+    if(DeviceHasJITFlags(JIT_FLAG_FORCE_MIRRORED)) return;
+    if(!mprotect(addr, PAGE_SIZE, PROT_READ | PROT_EXEC)) return;
+    // FIXME: For some reason the one page in liblwjgl.dylib is mapped as r-x/rwx (COW), and recent builds on iOS 18 switches it to r--/rw- causing codesign failure. Here we hack it to map anon page to get r-x back
+    char tempPage[PAGE_SIZE];
+    memcpy(tempPage, addr, PAGE_SIZE);
+    void *result = mmap(addr, PAGE_SIZE, PROT_READ | PROT_WRITE, MAP_FIXED | MAP_PRIVATE | MAP_ANON, -1, 0);
+    assert(result != MAP_FAILED);
+    memcpy(addr, tempPage, PAGE_SIZE);
+    mprotect(addr, PAGE_SIZE, PROT_READ | PROT_EXEC);
+}
+
 void registerOpenHandler(JNIEnv *env) {
     jclass cls;
 
@@ -249,7 +263,11 @@ void handleFramebufferSizeJava(void* window, int w, int h) {
 }
 
 void pojavPumpEvents(void* window) {
-    CallbackBridge_nativeSetInputReady(YES);
+    static BOOL setInputReady = NO;
+    if(!setInputReady) {
+        setInputReady = YES;
+        CallbackBridge_nativeSetInputReady(YES);
+    }
     //__android_log_print(ANDROID_LOG_INFO, "input_bridge_v3", "pojavPumpevents %d", eventCounter);
     size_t counter = atomic_load_explicit(&eventCounter, memory_order_acquire);
     if((cLastX != cursorX || cLastY != cursorY) && GLFW_invoke_CursorPos) {
@@ -362,7 +380,6 @@ const int hotbarKeys[9] = {
     GLFW_KEY_4, GLFW_KEY_5, GLFW_KEY_6,
     GLFW_KEY_7, GLFW_KEY_8, GLFW_KEY_9
 };
-int guiScale = 1;
 int mcscale(CGFloat input) {
     return (int)((guiScale * input)/resolutionScale);
 }
@@ -382,10 +399,6 @@ int callback_SurfaceViewController_touchHotbar(CGFloat x, CGFloat y) {
     return hotbarKeys[(int) MathUtils_map(x, barX, barX + barWidth, 0, 9)];
 }
 
-JNIEXPORT void JNICALL Java_net_kdt_pojavlaunch_uikit_UIKit_updateMCGuiScale(JNIEnv* env, jclass clazz, jint scale) {
-    guiScale = scale;
-}
-
 JNIEXPORT jstring JNICALL Java_org_lwjgl_glfw_CallbackBridge_nativeClipboard(JNIEnv* env, jclass clazz, jint action, jstring copySrc) {
     NSDebugLog(@"Debug: Clipboard access is going on\n");
     return UIKit_accessClipboard(env, action, copySrc);
@@ -393,6 +406,10 @@ JNIEXPORT jstring JNICALL Java_org_lwjgl_glfw_CallbackBridge_nativeClipboard(JNI
 
 JNIEXPORT void JNICALL Java_org_lwjgl_glfw_CallbackBridge_nativeSetGrabbing(JNIEnv* env, jclass clazz, jboolean grabbing, jfloat xset, jfloat yset) {
     isGrabbing = grabbing;
+    
+    if(grabbing) {
+        [MinecraftOptionUtils.sharedInstance updateMCGuiScale];
+    }
 
     dispatch_async(dispatch_get_main_queue(), ^{
         SurfaceViewController *vc = ((SurfaceViewController *)UIWindow.mainWindow.rootViewController);
@@ -408,6 +425,7 @@ void CallbackBridge_nativeSetInputReady(BOOL inputReady) {
     isInputReady = inputReady;
     if (inputReady) {
         if (GLFW_invoke_FramebufferSize) {
+            hackFix18LWJGL(GLFW_invoke_FramebufferSize);
             GLFW_invoke_FramebufferSize((void*) showingWindow, windowWidth, windowHeight);
         }
         if (GLFW_invoke_WindowSize) {

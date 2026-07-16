@@ -26,6 +26,7 @@ include_directories(
   "external/Apple"
   "external/ballpa1n"
   "external/ballpa1n/wrapped"
+  "external/mach"
 )
 
 # For cacio support library
@@ -136,6 +137,7 @@ add_executable(AngelAuraAmethyst
   external/NRFileManager/NSFileManager+NRFileManager.m
   external/ballpa1n/HostManager.c
   external/ballpa1n/wrapped/HostManagerBridge.m
+  external/mach/mach_excServer.c
 
   installer/FabricInstallViewController.m
   installer/ForgeInstallViewController.m
@@ -168,6 +170,7 @@ add_executable(AngelAuraAmethyst
   LauncherProfileEditorViewController.m
   LauncherProfilesViewController.m
   LauncherSplitViewController.m
+  MinecraftOptionUtils.m
   MinecraftResourceDownloadTask.m
   MinecraftResourceUtils.m
   PickTextField.m
