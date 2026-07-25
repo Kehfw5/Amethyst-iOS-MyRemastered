@@ -134,7 +134,7 @@ static NSString * const kAnalyticsMCLaunchTimestampKey = @"analytics_mc_launch_t
         return YES;
     }
     // 与 main.m 一致的 _TrollStore 标记文件检查
-    NSString *tsPath = [NSString stringWithFormat:@"%@/../_TrollStore", [NSBundle.mainBundle.bundlePath]];
+    NSString *tsPath = [NSString stringWithFormat:@"%@/../_TrollStore", [[NSBundle mainBundle] bundlePath]];
     if (!access(tsPath.UTF8String, F_OK)) {
         return YES;
     }
@@ -161,8 +161,8 @@ static NSString * const kAnalyticsMCLaunchTimestampKey = @"analytics_mc_launch_t
         return YES;
     }
     // 备选方案：检查 AltKit framework 是否被链接
-    NSString *altKitPath = [[NSBundle.mainBundle.privateFrameworksPath stringByAppendingPathComponent:@"AltKit.framework"] stringByAppendingString:@"/AltKit"];
-    if ([NSFileManager.defaultManager fileExistsAtPath:altKitPath]) {
+    NSString *altKitPath = [[[[NSBundle mainBundle] privateFrameworksPath] stringByAppendingPathComponent:@"AltKit.framework"] stringByAppendingString:@"/AltKit"];
+    if ([[NSFileManager defaultManager] fileExistsAtPath:altKitPath]) {
         return YES;
     }
     return NO;
