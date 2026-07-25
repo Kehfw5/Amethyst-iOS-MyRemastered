@@ -160,6 +160,8 @@
 "preference.detail.news_url" = "设置新闻页面的网址";
 "preference.title.reset_news_url" = "恢复默认新闻网址";
 "preference.detail.reset_news_url" = "将新闻网址重置为默认值";
+"preference.title.view_analytics_stats" = "使用统计";
+"preference.detail.view_analytics_stats" = "查看启动器的使用统计数据";
 "Profiles" = "实例";
 "Settings" = "设置";
 

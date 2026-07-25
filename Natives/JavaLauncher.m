@@ -21,6 +21,7 @@
 #import "JavaLauncher.h"
 #import "LauncherPreferences.h"
 #import "PLProfiles.h"
+#import "AnalyticsService.h"
 
 #define fm NSFileManager.defaultManager
 
@@ -539,6 +540,9 @@ int launchJVM(NSString *accountId, id launchTarget, int width, int height, int m
         setenv("AMETHYST_WINDOWING_BACKEND", windowingBackend.UTF8String, 1);
         NSLog(@"[JavaLauncher] WINDOWING_BACKEND is set to %@ (version=%@, useSDL3=%d)",
             windowingBackend, mcVersionId, useSDL3);
+
+        // 通知 AnalyticsService 记录 MC 启动事件（递增版本 launch_count、记录启动时间戳）
+        [[AnalyticsService sharedService] recordMCLaunch:mcVersionId];
         // Setup gameDir
         gameDir = [NSString stringWithFormat:@"%s/instances/%@/%@",
             getenv("POJAV_HOME"), getPrefObject(@"general.game_directory"),

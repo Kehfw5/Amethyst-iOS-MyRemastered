@@ -21,6 +21,7 @@
 #import "UpdateChecker.h"
 #import "CurseForgeAPIKeyViewController.h"
 #import "CustomControlsViewController.h"
+#import "AnalyticsStatsViewController.h"
 
 @interface LauncherPreferencesViewController()
 @property(nonatomic) NSArray<NSString*> *rendererKeys, *rendererList;
@@ -532,6 +533,12 @@
               @"type": self.typeSwitch,
               @"enableCondition": whenNotInGame
             },
+            @{@"key": @"analytics_enabled",
+              @"hasDetail": @YES,
+              @"icon": @"chart.bar",
+              @"type": self.typeSwitch,
+              @"enableCondition": whenNotInGame
+            },
             @{@"key": @"announcement_preview_level",
               @"hasDetail": @YES,
               @"icon": @"megaphone",
@@ -547,6 +554,19 @@
                   @"仅摘要（标题+摘要）",
                   @"仅标题"
               ]
+            },
+            @{@"key": @"view_analytics_stats",
+              @"hasDetail": @YES,
+              @"icon": @"chart.bar.xaxis",
+              @"type": self.typeButton,
+              @"enableCondition": whenNotInGame,
+              @"action": ^void(){
+                  // 弹出统计展示页（modal page sheet）
+                  AnalyticsStatsViewController *statsVC = [[AnalyticsStatsViewController alloc] init];
+                  UINavigationController *nav = [[UINavigationController alloc] initWithRootViewController:statsVC];
+                  nav.modalPresentationStyle = UIModalPresentationPageSheet;
+                  [self presentViewController:nav animated:YES completion:nil];
+              }
             },
             @{@"key": @"reset_warnings",
               @"icon": @"exclamationmark.triangle",

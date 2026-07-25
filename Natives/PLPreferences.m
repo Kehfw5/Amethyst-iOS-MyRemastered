@@ -47,6 +47,10 @@ NSString *const PREF_MOD_MIRROR = @"general.mod_mirror";
             @"ram_allocation": @(0),
             // 首页公告磁贴预览级别：full（标题+日期+摘要）/ summary（标题+摘要）/ title_only（仅标题）
             @"announcement_preview_level": @"summary",
+            // 匿名使用统计：默认开启。可通过"通用-匿名使用统计"开关关闭。
+            // 采集设备型号、系统版本、安装方式、MC 版本/时长/崩溃次数等，
+            // 每 5 分钟心跳上报一次，用于了解启动器使用情况、优化体验。
+            @"analytics_enabled": @YES,
         }.mutableCopy,
         @"video": @{ // Video & Audio
             @"renderer": @"auto",

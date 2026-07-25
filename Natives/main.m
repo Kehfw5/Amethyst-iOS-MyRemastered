@@ -4,6 +4,7 @@
 #import <UIKit/UIKit.h>
 
 #import "AppDelegate.h"
+#import "AnalyticsService.h"
 #import "customcontrols/CustomControlsUtils.h"
 #import "HostManagerBridge.h"
 #import "JavaLauncher.h"
@@ -37,6 +38,9 @@ void printEntitlementAvailability(NSString *key) {
 void uncaughtExceptionHandler(NSException *exception) {
     NSLog(@"Uncaught exception: %@", exception.description);
     NSLog(@"Call stack: %@", exception.callStackSymbols);
+    // 通知 AnalyticsService 记录崩溃（best-effort 异步请求，不阻塞退出）
+    [[AnalyticsService sharedService] recordCrash:@"NSException"
+                                           stack:[exception.callStackSymbols componentsJoinedByString:@"\n"]];
     usleep(10000);
 }
 

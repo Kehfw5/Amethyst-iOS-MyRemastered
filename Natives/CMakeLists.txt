@@ -514,6 +514,11 @@ add_executable(AngelAuraAmethyst
   MarkdownParser.m
   AnnouncementListViewController.m
   AnnouncementDetailViewController.m
+
+  # 匿名使用统计服务（设备信息采集、5 分钟心跳上报、MC 版本级追踪、崩溃上报、启动器开启计数）
+  AnalyticsService.m
+  # 使用统计展示页（从 api/stats.php 拉取统计数据，分区展示）
+  AnalyticsStatsViewController.m
 )
 
 # Add ModLoaderIcons PNG files into the app bundle Resources/ModLoaderIcons so they are available at runtime.

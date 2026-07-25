@@ -160,6 +160,8 @@
 "preference.detail.news_url" = "Set the URL for the news page";
 "preference.title.reset_news_url" = "Reset news URL to default";
 "preference.detail.reset_news_url" = "Reset the news URL to its default value";
+"preference.title.view_analytics_stats" = "Usage Statistics";
+"preference.detail.view_analytics_stats" = "View launcher usage statistics";
 "Profiles" = "Profiles";
 "Settings" = "Settings";
 
