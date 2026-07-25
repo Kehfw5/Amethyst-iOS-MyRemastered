@@ -582,7 +582,9 @@ typedef NS_ENUM(NSInteger, StatsSection) {
 
     NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:url];
     [request setHTTPMethod:@"GET"];
-    [request setValue:@"Air/1.0 (iOS)" forHTTPHeaderField:@"User-Agent"];
+    // InfinityFree 等主机有反爬虫机制，会拒绝非浏览器 User-Agent，
+    // 故使用与项目内 Forge/NeoForge 安装器一致的 Safari UA 避免被拦截。
+    [request setValue:@"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15" forHTTPHeaderField:@"User-Agent"];
     request.timeoutInterval = 15.0;
 
     __weak typeof(self) weakSelf = self;
