@@ -722,9 +722,9 @@ typedef NS_ENUM(NSInteger, StatsSection) {
         case StatsSectionLauncherVersions:
             return [self arrayForKey:@"launcher_versions"].count;
         case StatsSectionJailbreakStatus:
-            return [self arrayForKey:@"jailbreak_status"].count;
+            return [self arrayForKey:@"jailbreak_distribution"].count;
         case StatsSectionMcVersions:
-            return [self arrayForKey:@"minecraft_versions"].count;
+            return [self arrayForKey:@"mc_version_stats"].count;
         case StatsSectionRecentCrashes:
             return [self arrayForKey:@"recent_crashes"].count;
         case StatsSectionOther:
@@ -780,8 +780,9 @@ typedef NS_ENUM(NSInteger, StatsSection) {
             NSArray *array = [self arrayForKey:@"device_models"];
             NSInteger total = [self totalOfArray:array countKey:@"count"];
             NSDictionary *dict = array[indexPath.row];
-            NSString *name = [self stringValueIn:dict forKey:@"name"];
-            if (name.length == 0) name = [self stringValueIn:dict forKey:@"device_model"];
+            // stats.php 返回 label 字段（人类可读名称），fallback 到 model
+            NSString *name = [self stringValueIn:dict forKey:@"label"];
+            if (name.length == 0) name = [self stringValueIn:dict forKey:@"model"];
             NSInteger count = [self integerValueIn:dict forKey:@"count"];
             CGFloat percent = total > 0 ? (CGFloat)count / total * 100.0 : 0.0;
             [cell configureWithTitle:name subtitle:nil count:count percent:percent showPercent:YES];
@@ -818,7 +819,7 @@ typedef NS_ENUM(NSInteger, StatsSection) {
             break;
         }
         case StatsSectionJailbreakStatus: {
-            NSArray *array = [self arrayForKey:@"jailbreak_status"];
+            NSArray *array = [self arrayForKey:@"jailbreak_distribution"];
             NSInteger total = [self totalOfArray:array countKey:@"count"];
             NSDictionary *dict = array[indexPath.row];
             NSString *status = [self stringValueIn:dict forKey:@"status"];
