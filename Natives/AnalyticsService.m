@@ -58,7 +58,7 @@ static NSString * const kAnalyticsMCLaunchTimestampKey = @"analytics_mc_launch_t
     }
     NSString *newsURL = getPrefObject(@"general.news_url");
     if (newsURL.length > 0) {
-        NSString *replaced = [newsURL stringByReplacingOccurrencesOfString:@"/api/announcements.json"
+        NSString *replaced = [newsURL stringByReplacingOccurrencesOfString:@"/api/announcements.php"
                                                                 withString:@"/api/report.php"];
         if (![replaced isEqualToString:newsURL]) {
             return replaced;

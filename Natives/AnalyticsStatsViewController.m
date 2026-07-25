@@ -535,11 +535,11 @@ typedef NS_ENUM(NSInteger, StatsSection) {
 - (NSString *)statsAPIURLString {
     NSString *url = getPrefObject(@"general.news_url");
     if (url.length == 0) {
-        url = @"https://newamethyst.ct.ws/api/announcements.json";
+        url = @"https://newamethyst.ct.ws/api/announcements.php";
     }
-    // 将 /api/announcements.json 替换为 /api/stats.php
-    if ([url containsString:@"/api/announcements.json"]) {
-        return [url stringByReplacingOccurrencesOfString:@"/api/announcements.json"
+    // 将 /api/announcements.php 替换为 /api/stats.php
+    if ([url containsString:@"/api/announcements.php"]) {
+        return [url stringByReplacingOccurrencesOfString:@"/api/announcements.php"
                                               withString:@"/api/stats.php"];
     }
     // 兜底：若 news_url 已被改成其他形态，则尝试替换最后一段路径为 stats.php
