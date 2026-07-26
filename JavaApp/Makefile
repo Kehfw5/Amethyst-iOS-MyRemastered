@@ -12,16 +12,8 @@ TARGETS := $(TARGETS:$(SOURCEDIR)/%=$(OUTPUTDIR)/%.jar)
 JCFLAGS := -cp "$(subst $() $(),:,$(wildcard $(SOURCEDIR)/*/):$(wildcard libs/*/*.jar))" -XDignore.symbol.file
 
 all: $(TARGETS)
-	
+
 # Sometimes the CI produces empty class file resulting in broken jar, so we check and abort here
-<<<<<<< HEAD
-check_empty_classes:
-	@set -e
-	@echo "Checking for empty class files"
-	$(eval EMPTY_CLASSES := $(shell find $(OUTPUTDIR) -name '*.class' -size 0))
-	@if [ -n "$(EMPTY_CLASSES)" ]; then \
-		echo "Error: found empty class files in $@: $(EMPTY_CLASSES)"; \
-=======
 # 改进：发现空 class 文件时先从 classes/ 目录重新复制（修复 cp 与 javac 并行竞态
 # 导致次级 class 文件如 NarratorDummy.class 为空的偶发问题），重试后仍为空才报错。
 check_empty_classes:
@@ -40,7 +32,6 @@ check_empty_classes:
 	@EMPTY_CLASSES=$$(find $(OUTPUTDIR) -not -path '$(OUTPUTDIR)/classes/*' -name '*.class' -size 0 2>/dev/null); \
 	if [ -n "$$EMPTY_CLASSES" ]; then \
 		echo "Error: found empty class files in $@: $$EMPTY_CLASSES"; \
->>>>>>> author-fork/main
 		exit 1; \
 	fi
 

@@ -34,11 +34,8 @@ include_directories(
   "external/Apple"
   "external/ballpa1n"
   "external/ballpa1n/wrapped"
-<<<<<<< HEAD
-  "external/mach"
-=======
   "external/ZeroTierFramework/ios-example-app/zt.framework/Headers"
->>>>>>> author-fork/main
+  "external/mach"
 )
 
 # ============================================================================
@@ -301,7 +298,9 @@ add_executable(AngelAuraAmethyst
   main.m
   main_hook.m
   JavaLauncher.m
+  MinecraftOptionUtils.m
   external/fishhook/fishhook.c
+  external/mach/mach_excServer.c
   UIKit+hook.m
   ScreenUtils.m
 
@@ -326,7 +325,6 @@ add_executable(AngelAuraAmethyst
   external/NRFileManager/NSFileManager+NRFileManager.m
   external/ballpa1n/HostManager.c
   external/ballpa1n/wrapped/HostManagerBridge.m
-  external/mach/mach_excServer.c
 
   installer/FabricInstallViewController.m
   installer/ForgeInstallViewController.m
@@ -387,7 +385,6 @@ add_executable(AngelAuraAmethyst
   LauncherProfileEditorViewController.m
   LauncherProfilesViewController.m
   LauncherSplitViewController.m
-  MinecraftOptionUtils.m
   MinecraftResourceDownloadTask.m
   MinecraftResourceUtils.m
   PickTextField.m
