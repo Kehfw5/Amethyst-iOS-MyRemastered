@@ -5,7 +5,7 @@
 //  使用统计展示页实现
 //  数据源：general.news_url 指向的 API 根目录下的 /api/stats.php
 //  URL 构造：将 general.news_url 中的 /api/announcements.json 替换为 /api/stats.php
-//  默认值：https://newamethyst.ct.ws/api/stats.php
+//  默认值：https://website-air.weishixvn.workers.dev/api/stats.php
 //
 
 #import "AnalyticsStatsViewController.h"
