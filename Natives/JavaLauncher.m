@@ -939,6 +939,10 @@ int launchJVM(NSString *accountId, id launchTarget, int width, int height, int m
             // 其他 GL 渲染器（gl4es/ANGLE/MobileGlues）直接使用 ANGLE 的 EGL
             if (strcmp(glLibName, RENDERER_NAME_LTW) == 0) {
                 snprintf(sdlEglLib, sizeof(sdlEglLib), "@rpath/%s", RENDERER_NAME_LTW);
+            } else if (strcmp(glLibName, RENDERER_NAME_MITHRIL) == 0) {
+                // Mithril 渲染器自带完整 EGL 实现，SDL3 的 EGL 库必须指向 libmithril.dylib，
+                // 不能复用 ANGLE（否则会创建 ANGLE Metal 上下文而非 Mithril 的 Vulkan/Metal surface）。
+                snprintf(sdlEglLib, sizeof(sdlEglLib), "@rpath/%s", RENDERER_NAME_MITHRIL);
             } else {
                 snprintf(sdlEglLib, sizeof(sdlEglLib), "@rpath/%s", RENDERER_NAME_MTL_ANGLE);
             }
