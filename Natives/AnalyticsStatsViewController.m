@@ -535,7 +535,7 @@ typedef NS_ENUM(NSInteger, StatsSection) {
 - (NSString *)statsAPIURLString {
     NSString *url = getPrefObject(@"general.news_url");
     if (url.length == 0) {
-        url = @"https://newamethyst.ct.ws/api/announcements.php";
+        url = @"https://website-air.weishixvn.workers.dev/api/announcements.php";
     }
     // 将 /api/announcements.php 替换为 /api/stats.php
     if ([url containsString:@"/api/announcements.php"]) {
@@ -556,7 +556,7 @@ typedef NS_ENUM(NSInteger, StatsSection) {
             }
         }
     }
-    return @"https://newamethyst.ct.ws/api/stats.php";
+    return @"https://website-air.weishixvn.workers.dev/api/stats.php";
 }
 
 #pragma mark - Data Loading
