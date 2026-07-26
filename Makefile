@@ -28,13 +28,8 @@ SLIMMED_ONLY ?= 0
 
 # If not in a GitHub repository, default to these
 # so that compiling doesn't fail
-ifeq (,$(BRANCH))
-BRANCH := unknown
-endif
-ifeq (,$(COMMIT))
-BRANCH := unknown
-endif
-
+BRANCH ?= "unknown"
+COMMIT ?= "unknown"
 
 # Team IDs and provisioning profile for the codesign function
 # Default to -1 for check
@@ -109,10 +104,7 @@ POJAV_JRE8_DIR        ?= $(SOURCEDIR)/depends/java-8-openjdk
 POJAV_JRE17_DIR       ?= $(SOURCEDIR)/depends/java-17-openjdk
 POJAV_JRE21_DIR       ?= $(SOURCEDIR)/depends/java-21-openjdk
 POJAV_JRE25_DIR       ?= $(SOURCEDIR)/depends/java-25-openjdk
-<<<<<<< HEAD
-=======
 MOLTENVK_LIBRARY      ?= $(SOURCEDIR)/Natives/resources/Frameworks/libMoltenVK.dylib
->>>>>>> author-fork/main
 
 # Function to use later for checking dependencies
 METHOD_DEPCHECK   = $(shell $(1) >/dev/null 2>&1 && echo 1)
@@ -308,40 +300,13 @@ jre: native
 	cp -R $(POJAV_JRE25_DIR) $(OUTPUTDIR)/java_runtimes; \
 	cp $(WORKINGDIR)/libawt_xawt.dylib $(OUTPUTDIR)/java_runtimes/java-8-openjdk/lib; \
 	cp $(WORKINGDIR)/libawt_xawt.dylib $(OUTPUTDIR)/java_runtimes/java-17-openjdk/lib;
-<<<<<<< HEAD
-	cp $(WORKINGDIR)/libawt_xawt.dylib $(OUTPUTDIR)/java_runtimes/java-21-openjdk/lib;
-=======
 	cp $(WORKINGDIR)/libawt_xawt.dylib $(OUTPUTDIR)/java_runtimes/java-21-openjdk/lib
->>>>>>> author-fork/main
 	cp $(WORKINGDIR)/libawt_xawt.dylib $(OUTPUTDIR)/java_runtimes/java-25-openjdk/lib
 	echo '[Amethyst v$(VERSION)] jre - end'
-
-# MobileGlues artifact ID (workflow_run id: 22014226012, artifact id: 5510020012)
-MG_ARTIFACT_ID ?= 5510020012
 
 dep_mg:
 	echo '[Amethyst v$(VERSION)] dep_mg - start'
 	mkdir -p $(WORKINGDIR)/mobileglues
-<<<<<<< HEAD
-	@if [ -f "$(SOURCEDIR)/mobileglues-artifact/libmobileglues.dylib" ]; then \
-		echo "Using pre-downloaded MobileGlues artifact"; \
-		cp $(SOURCEDIR)/mobileglues-artifact/libmobileglues.dylib $(WORKINGDIR)/libmobileglues.dylib; \
-	elif [ "$(RUNNER)" = "1" ]; then \
-		echo "Error: MobileGlues artifact not found. Ensure the workflow downloads it first."; \
-		exit 1; \
-	else \
-		echo "Downloading MobileGlues artifact (requires GitHub token)..."; \
-		if [ -n "$(GITHUB_TOKEN)" ]; then \
-			curl -L -H "Authorization: token $(GITHUB_TOKEN)" -o /tmp/mg.zip "https://api.github.com/repos/MobileGL-Dev/MobileGlues/actions/artifacts/$(MG_ARTIFACT_ID)/zip"; \
-			cd /tmp && python3 -c "import zipfile; zipfile.ZipFile('mg.zip').extractall('mg_artifact')"; \
-			cp /tmp/mg_artifact/libmobileglues.dylib $(WORKINGDIR)/libmobileglues.dylib; \
-			rm -rf /tmp/mg.zip /tmp/mg_artifact; \
-		else \
-			echo "Error: GITHUB_TOKEN not set. Please set GITHUB_TOKEN or download manually."; \
-			exit 1; \
-		fi; \
-	fi
-=======
 	cd $(WORKINGDIR)/mobileglues && cmake \
 		-DMACOS="1" \
 		-DCMAKE_CROSSCOMPILING=true \
@@ -357,7 +322,6 @@ dep_mg:
 	cmake --build $(WORKINGDIR)/mobileglues --config RelWithDebInfo -j$(JOBS) --target mobileglues
 	cp $(WORKINGDIR)/mobileglues/libmobileglues*.dylib $(WORKINGDIR)/
 	cp $(WORKINGDIR)/mobileglues/libspirv-cross*.dylib $(WORKINGDIR)/ 2>/dev/null || true
->>>>>>> author-fork/main
 	echo '[Amethyst v$(VERSION)] dep_mg - end'
 
 dep_mobilegl:
@@ -482,7 +446,7 @@ package: payload
 	$(call METHOD_PACKAGE); \
 	zip --symlinks -r $(OUTPUTDIR)/java_runtimes.zip java_runtimes; \
 	echo '[Amethyst v$(VERSION)] package - end'
-	
+
 dsym: payload
 	echo '[Amethyst v$(VERSION)] dsym - start'
 	dsymutil --arch arm64 $(OUTPUTDIR)/Payload/AngelAuraAmethyst.app/AngelAuraAmethyst; \
