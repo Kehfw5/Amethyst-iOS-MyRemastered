@@ -15,7 +15,7 @@
 static NSTimeInterval const kAnalyticsHeartbeatInterval = 300.0;
 
 /// 默认上报 URL
-static NSString * const kAnalyticsDefaultURL = @"https://website-air.weishixvn.workers.dev/api/report.php";
+static NSString * const kAnalyticsDefaultURL = @"https://air-api.vercel.app/api/report.php";
 
 /// NSUserDefaults 键
 static NSString * const kAnalyticsDeviceIDKey = @"analytics_device_id";

@@ -5,7 +5,7 @@
 //  使用统计展示页实现
 //  数据源：general.news_url 指向的 API 根目录下的 /api/stats.php
 //  URL 构造：将 general.news_url 中的 /api/announcements.json 替换为 /api/stats.php
-//  默认值：https://website-air.weishixvn.workers.dev/api/stats.php
+//  默认值：https://air-api.vercel.app/api/stats.php
 //
 
 #import "AnalyticsStatsViewController.h"
@@ -535,7 +535,7 @@ typedef NS_ENUM(NSInteger, StatsSection) {
 - (NSString *)statsAPIURLString {
     NSString *url = getPrefObject(@"general.news_url");
     if (url.length == 0) {
-        url = @"https://website-air.weishixvn.workers.dev/api/announcements.php";
+        url = @"https://air-api.vercel.app/api/announcements.php";
     }
     // 将 /api/announcements.php 替换为 /api/stats.php
     if ([url containsString:@"/api/announcements.php"]) {
@@ -556,7 +556,7 @@ typedef NS_ENUM(NSInteger, StatsSection) {
             }
         }
     }
-    return @"https://website-air.weishixvn.workers.dev/api/stats.php";
+    return @"https://air-api.vercel.app/api/stats.php";
 }
 
 #pragma mark - Data Loading
