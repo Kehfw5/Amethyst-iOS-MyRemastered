@@ -48,6 +48,11 @@
 //   - Fragment shader 编译失败时忽略错误，让 BSL/Mellow 等光影包能运行
 #define RENDERER_NAME_LTW "libltw.dylib"
 
+// Mithril 渲染器 - OpenGL 3.3 Core → Vulkan/Metal 转译层（libmithril.dylib）。
+// 提供完整的 EGL 1.5 + GL 实现（Vulkan/Metal backend），
+// 必须从其自身 dylib 解析 EGL 符号，不能复用 ANGLE 的 EGL。
+#define RENDERER_NAME_MITHRIL "libmithril.dylib"
+
 #define SPECIALBTN_KEYBOARD -1
 #define SPECIALBTN_TOGGLECTRL -2
 #define SPECIALBTN_MOUSEPRI -3

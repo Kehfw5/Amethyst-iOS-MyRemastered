@@ -23,9 +23,15 @@ static void* load_egl_symbol(void *dl_handle, const char *symbol) {
 }
 
 static bool dlsym_EGL() {
-    // MobileGL 已移除，EGL 符号始终从 ANGLE（libtinygl4angle.dylib）解析。
+    // MobileGL 已移除，EGL 符号默认从 ANGLE（libtinygl4angle.dylib）解析。
+    // Mithril 渲染器（libmithril.dylib）自带完整的 EGL 1.5 实现（Vulkan/Metal
+    // backend），必须从自身 dylib 解析 EGL 符号；若复用 ANGLE 的 EGL，会创建
+    // ANGLE Metal 上下文而非 Mithril 的 surface，且 eglChooseConfig 在 Mithril
+    // 请求的属性下可能返回 0 个配置导致 gl_init_context 断言崩溃。
     const char *renderer = getenv("AMETHYST_RENDERER");
-    const char *eglLibrary = RENDERER_NAME_MTL_ANGLE;
+    const char *eglLibrary = (renderer && strcmp(renderer, RENDERER_NAME_MITHRIL) == 0)
+        ? RENDERER_NAME_MITHRIL
+        : RENDERER_NAME_MTL_ANGLE;
     NSString *eglPath = [NSString stringWithFormat:@"@rpath/%s", eglLibrary ?: ""];
     void* dl_handle = dlopen(eglPath.UTF8String, RTLD_NOW | RTLD_GLOBAL);
     if (!dl_handle) {
@@ -118,7 +124,11 @@ gl_render_window_t* gl_init_context(gl_render_window_t *share) {
     gl_render_window_t* bundle = calloc(1, sizeof(gl_render_window_t));
 
     NSString *renderer = NSProcessInfo.processInfo.environment[@"AMETHYST_RENDERER"];
-    BOOL angleDesktopGL = [renderer isEqualToString:@ RENDERER_NAME_MTL_ANGLE];
+    // Mithril 与 ANGLE 一样实现 desktop OpenGL（Mithril 是 OpenGL 3.3 Core Profile），
+    // 因此两者都走 EGL_OPENGL_BIT + EGL_OPENGL_API 路径。Mithril 的 EGLConfig 已同时
+    // 声明 EGL_OPENGL_BIT | EGL_OPENGL_ES3_BIT，这里显式用 EGL_OPENGL_BIT 更贴合其桌面 GL 本质。
+    BOOL desktopGL = [renderer isEqualToString:@ RENDERER_NAME_MTL_ANGLE] ||
+                     [renderer isEqualToString:@ RENDERER_NAME_MITHRIL];
 
     const EGLint attribs[] = {
         EGL_RED_SIZE, 8,
@@ -127,7 +137,7 @@ gl_render_window_t* gl_init_context(gl_render_window_t *share) {
         EGL_ALPHA_SIZE, 8,
         EGL_DEPTH_SIZE, 24,
         EGL_SURFACE_TYPE, EGL_WINDOW_BIT|EGL_PBUFFER_BIT,
-        EGL_RENDERABLE_TYPE, angleDesktopGL ? EGL_OPENGL_BIT : EGL_OPENGL_ES3_BIT,
+        EGL_RENDERABLE_TYPE, desktopGL ? EGL_OPENGL_BIT : EGL_OPENGL_ES3_BIT,
         EGL_NONE
     };
 
@@ -148,7 +158,7 @@ gl_render_window_t* gl_init_context(gl_render_window_t *share) {
     }
 
     EGLBoolean bindResult;
-    if (angleDesktopGL) {
+    if (desktopGL) {
         NSDebugLog(@"EGLBridge: Binding to desktop OpenGL");
         bindResult = handle.eglBindAPI(EGL_OPENGL_API);
     } else {

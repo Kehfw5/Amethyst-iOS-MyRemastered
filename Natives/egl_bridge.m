@@ -140,6 +140,12 @@ int pojavInitOpenGL() {
         set_gl_bridge_tbl();
     } else if ([renderer isEqualToString:@ RENDERER_NAME_MTL_ANGLE]) {
         set_gl_bridge_tbl();
+    } else if ([renderer isEqualToString:@ RENDERER_NAME_MITHRIL]) {
+        // Mithril 渲染器：EGL + GL 全部由 libmithril.dylib 提供（Vulkan/Metal backend）。
+        // gl_bridge.m 的 dlsym_EGL() 会从 libmithril.dylib 解析 EGL 符号，
+        // gl_init_context 用 EGL_OPENGL_BIT + EGL_OPENGL_API 创建 desktop GL 3.3 上下文。
+        // 下方的统一逻辑会把它设为 LWJGL 的 opengl.libname 并 RTLD_GLOBAL 预加载。
+        set_gl_bridge_tbl();
     } else if ([renderer isEqualToString:@ RENDERER_NAME_LTW]) {
         // LTW (Large Thin Wrapper) - OpenGL Core 3.3 → OpenGL ES 3 转译层
         // 复刻自官方 MojoLauncher/LTW 仓库，完美支持 Sodium + Iris 光影。
