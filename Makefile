@@ -109,6 +109,10 @@ POJAV_JRE8_DIR        ?= $(SOURCEDIR)/depends/java-8-openjdk
 POJAV_JRE17_DIR       ?= $(SOURCEDIR)/depends/java-17-openjdk
 POJAV_JRE21_DIR       ?= $(SOURCEDIR)/depends/java-21-openjdk
 POJAV_JRE25_DIR       ?= $(SOURCEDIR)/depends/java-25-openjdk
+<<<<<<< HEAD
+=======
+MOLTENVK_LIBRARY      ?= $(SOURCEDIR)/Natives/resources/Frameworks/libMoltenVK.dylib
+>>>>>>> author-fork/main
 
 # Function to use later for checking dependencies
 METHOD_DEPCHECK   = $(shell $(1) >/dev/null 2>&1 && echo 1)
@@ -142,17 +146,20 @@ METHOD_CHANGE_PLAT = \
 	fi \
 	
 # Function to package the application
+# 修复：使用统一的命名格式 amethystremastered
 METHOD_PACKAGE = \
 	if [ '$(TROLLSTORE_JIT_ENT)' == '1' ]; then \
 		IPA_SUFFIX="-trollstore.tipa"; \
 	else \
 		IPA_SUFFIX=".ipa"; \
 	fi; \
+	rm -f $(OUTPUTDIR)/com.air-devs.air-$(VERSION)-$(PLATFORM_NAME)$$IPA_SUFFIX; \
+	rm -f $(OUTPUTDIR)/com.air-devs.air.slimmed-$(VERSION)-$(PLATFORM_NAME)$$IPA_SUFFIX; \
 	if [ '$(SLIMMED_ONLY)' = '0' ]; then \
-		zip --symlinks -r $(OUTPUTDIR)/org.angelauramc.amethyst-$(VERSION)-$(PLATFORM_NAME)$$IPA_SUFFIX Payload; \
+		zip --symlinks -r $(OUTPUTDIR)/com.air-devs.air-$(VERSION)-$(PLATFORM_NAME)$$IPA_SUFFIX Payload; \
 	fi; \
 	if [ '$(SLIMMED)' = '1' ] || [ '$(SLIMMED_ONLY)' = '1' ]; then \
-		zip --symlinks -r $(OUTPUTDIR)/org.angelauramc.amethyst.slimmed-$(VERSION)-$(PLATFORM_NAME)$$IPA_SUFFIX Payload --exclude='Payload/AngelAuraAmethyst.app/java_runtimes/*'; \
+		zip --symlinks -r $(OUTPUTDIR)/com.air-devs.air.slimmed-$(VERSION)-$(PLATFORM_NAME)$$IPA_SUFFIX Payload --exclude='Payload/AngelAuraAmethyst.app/java_runtimes/*'; \
 	fi
 
 # Function to download and unpack Java runtimes.
@@ -293,7 +300,7 @@ jre: native
 	$(call METHOD_JAVA_UNPACK,25,'https://assets.angelauramc.dev/openjdk/ios-arm64/jre25-ios-aarch64.zip'); \
 	if [ -f "$(ls jre*.tar.xz)" ]; then rm $(SOURCEDIR)/depends/jre*.tar.xz; fi; \
 	cd $(SOURCEDIR); \
-	rm -rf $(SOURCEDIR)/depends/java-*-openjdk/{ASSEMBLY_EXCEPTION,bin,include,jre,legal,LICENSE,man,THIRD_PARTY_README,lib/{ct.sym,jspawnhelper,libjsig.dylib,src.zip,tools.jar}}; \
+	rm -rf $(SOURCEDIR)/depends/java-{8,17,21,25}-openjdk/{ASSEMBLY_EXCEPTION,bin,include,jre,legal,LICENSE,man,THIRD_PARTY_README,lib/{ct.sym,jspawnhelper,libjsig.dylib,src.zip,tools.jar}}; \
 	$(call METHOD_DIRCHECK,$(OUTPUTDIR)/java_runtimes); \
 	cp -R $(POJAV_JRE8_DIR) $(OUTPUTDIR)/java_runtimes; \
 	cp -R $(POJAV_JRE17_DIR) $(OUTPUTDIR)/java_runtimes; \
@@ -301,7 +308,11 @@ jre: native
 	cp -R $(POJAV_JRE25_DIR) $(OUTPUTDIR)/java_runtimes; \
 	cp $(WORKINGDIR)/libawt_xawt.dylib $(OUTPUTDIR)/java_runtimes/java-8-openjdk/lib; \
 	cp $(WORKINGDIR)/libawt_xawt.dylib $(OUTPUTDIR)/java_runtimes/java-17-openjdk/lib;
+<<<<<<< HEAD
 	cp $(WORKINGDIR)/libawt_xawt.dylib $(OUTPUTDIR)/java_runtimes/java-21-openjdk/lib;
+=======
+	cp $(WORKINGDIR)/libawt_xawt.dylib $(OUTPUTDIR)/java_runtimes/java-21-openjdk/lib
+>>>>>>> author-fork/main
 	cp $(WORKINGDIR)/libawt_xawt.dylib $(OUTPUTDIR)/java_runtimes/java-25-openjdk/lib
 	echo '[Amethyst v$(VERSION)] jre - end'
 
@@ -311,6 +322,7 @@ MG_ARTIFACT_ID ?= 5510020012
 dep_mg:
 	echo '[Amethyst v$(VERSION)] dep_mg - start'
 	mkdir -p $(WORKINGDIR)/mobileglues
+<<<<<<< HEAD
 	@if [ -f "$(SOURCEDIR)/mobileglues-artifact/libmobileglues.dylib" ]; then \
 		echo "Using pre-downloaded MobileGlues artifact"; \
 		cp $(SOURCEDIR)/mobileglues-artifact/libmobileglues.dylib $(WORKINGDIR)/libmobileglues.dylib; \
@@ -329,7 +341,32 @@ dep_mg:
 			exit 1; \
 		fi; \
 	fi
+=======
+	cd $(WORKINGDIR)/mobileglues && cmake \
+		-DMACOS="1" \
+		-DCMAKE_CROSSCOMPILING=true \
+		-DCMAKE_SYSTEM_NAME=Darwin \
+		-DCMAKE_SYSTEM_PROCESSOR=aarch64 \
+		-DCMAKE_OSX_SYSROOT="$(SDKPATH)" \
+		-DCMAKE_OSX_ARCHITECTURES=arm64 \
+		-DCMAKE_OSX_DEPLOYMENT_TARGET=14.0 \
+		-DCMAKE_C_FLAGS="-arch arm64" \
+		-DSPIRV_CROSS_SHARED="ON" \
+		$(SOURCEDIR)/Natives/external/MobileGlues/MobileGlues-cpp/
+
+	cmake --build $(WORKINGDIR)/mobileglues --config RelWithDebInfo -j$(JOBS) --target mobileglues
+	cp $(WORKINGDIR)/mobileglues/libmobileglues*.dylib $(WORKINGDIR)/
+	cp $(WORKINGDIR)/mobileglues/libspirv-cross*.dylib $(WORKINGDIR)/ 2>/dev/null || true
+>>>>>>> author-fork/main
 	echo '[Amethyst v$(VERSION)] dep_mg - end'
+
+dep_mobilegl:
+	# MobileGL（Vulkan/GLES 后端渲染器）集成已完全移除：
+	# - 构建链中的 perl 补丁（Range1D/BufferChange/is_aggregate_v）不再需要
+	# - libMobileGL.dylib / libMobileGL-gles.dylib 不再构建/打包
+	# - 运行时不再提供 MobileGL 渲染器选项
+	# 保留空目标避免外部 make 调用报错（payload 不再依赖此目标）
+	@echo '[Amethyst v$(VERSION)] dep_mobilegl - skipped (MobileGL removed)'
 
 assets:
 	echo '[Amethyst v$(VERSION)] assets - start'
@@ -354,7 +391,19 @@ payload: native dep_mg java jre assets
 	cp -R $(SOURCEDIR)/Natives/resources/en.lproj/LaunchScreen.storyboardc $(WORKINGDIR)/AngelAuraAmethyst.app/Base.lproj/ || exit 1
 	cp -R $(SOURCEDIR)/Natives/resources/* $(WORKINGDIR)/AngelAuraAmethyst.app/ || exit 1
 	cp $(WORKINGDIR)/*.dylib $(WORKINGDIR)/AngelAuraAmethyst.app/Frameworks/ || exit 1
-	cp -R $(SOURCEDIR)/JavaApp/libs/others/* $(WORKINGDIR)/AngelAuraAmethyst.app/libs/ || exit 1
+	# spirv-cross 软链接（防御性兜底）：若 MobileGlues 构建产出 libspirv-cross-c-shared.0.dylib，
+	# 创建 libspirv-cross.dylib 软链接，兼容按 macOS 默认名加载的 native 代码。
+	if [ -f "$(WORKINGDIR)/AngelAuraAmethyst.app/Frameworks/libspirv-cross-c-shared.0.dylib" ] && [ ! -f "$(WORKINGDIR)/AngelAuraAmethyst.app/Frameworks/libspirv-cross.dylib" ]; then \
+		ln -sf libspirv-cross-c-shared.0.dylib $(WORKINGDIR)/AngelAuraAmethyst.app/Frameworks/libspirv-cross.dylib; \
+	fi
+	# libSDL3 软链接（关键修复 26.3-snapshot-4+ SDL3 启动）：
+	# MC 26.3-snapshot-4+ 使用 SDL3 替代 GLFW。实际 Frameworks 中是 libSDL3.0.dylib（带主版本号），
+	# 但 SDL.java（mapLibraryNameBundled("SDL3")）和 egl_bridge.m（dlopen "@rpath/libSDL3.dylib"）
+	# 期望 libSDL3.dylib（无版本号）。不创建软链接会导致 LWJGL 加载 SDL3 失败，MC 启动崩溃。
+	if [ -f "$(WORKINGDIR)/AngelAuraAmethyst.app/Frameworks/libSDL3.0.dylib" ] && [ ! -f "$(WORKINGDIR)/AngelAuraAmethyst.app/Frameworks/libSDL3.dylib" ]; then \
+		ln -sf libSDL3.0.dylib $(WORKINGDIR)/AngelAuraAmethyst.app/Frameworks/libSDL3.dylib; \
+	fi
+		cp -R $(SOURCEDIR)/JavaApp/libs/others/* $(WORKINGDIR)/AngelAuraAmethyst.app/libs/ || exit 1
 	cp $(SOURCEDIR)/JavaApp/build/*.jar $(WORKINGDIR)/AngelAuraAmethyst.app/libs/ || exit 1
 	cp -R $(SOURCEDIR)/JavaApp/libs/caciocavallo/* $(WORKINGDIR)/AngelAuraAmethyst.app/libs_caciocavallo || exit 1
 	cp -R $(SOURCEDIR)/JavaApp/libs/caciocavallo17/* $(WORKINGDIR)/AngelAuraAmethyst.app/libs_caciocavallo17 || exit 1
@@ -384,10 +433,13 @@ payload: native dep_mg java jre assets
 		ldid -S$(SOURCEDIR)/entitlements.sideload.xml $(OUTPUTDIR)/Payload/AngelAuraAmethyst.app/AngelAuraAmethyst; \
 	fi
 	chmod -R 755 $(OUTPUTDIR)/Payload
-	if [ '$(PLATFORM)' != '2' ]; then \
-		$(call METHOD_MACHO,$(OUTPUTDIR)/Payload/AngelAuraAmethyst.app,$(call METHOD_CHANGE_PLAT,$(PLATFORM),$$file)); \
-		$(call METHOD_MACHO,$(OUTPUTDIR)/java_runtimes,$(call METHOD_CHANGE_PLAT,$(PLATFORM),$$file)); \
-	fi
+	# 总是运行平台重打标（对齐 Ynnyny 仓库）—— 对已 iOS 标记的 Mach-O 是幂等的，
+	# 但能捕获从 Maven 直接拉取的新 dylib（如 3.3.5 lwjgl-stb），它们 ship 时
+	# platform=macos，iOS dyld 会静默拒绝加载，导致 LWJGL 抛 UnsatisfiedLinkError。
+	# 原本用 [ PLATFORM != 2 ] 守卫的假设是所有 commit 的 dylib 都已 iOS 标记，
+	# 这个假设在同步 Ynnyny 顶层 dylib 时被打破。
+	$(call METHOD_MACHO,$(OUTPUTDIR)/Payload/AngelAuraAmethyst.app,$(call METHOD_CHANGE_PLAT,$(PLATFORM),$$file)); \
+	$(call METHOD_MACHO,$(OUTPUTDIR)/java_runtimes,$(call METHOD_CHANGE_PLAT,$(PLATFORM),$$file));
 	echo '[Amethyst v$(VERSION)] payload - end'
 
 deploy:
@@ -407,9 +459,9 @@ deploy:
 		else \
 			$(call METHOD_PACKAGE); \
 			if [ '$(SLIMMED_ONLY)' = '0' ]; then \
-				open $(OUTPUTDIR)/net.kdt.pojavlauncher-$(VERSION)-$(PLATFORM_NAME).ipa; \
+				open $(OUTPUTDIR)/com.air-devs.air-$(VERSION)-$(PLATFORM_NAME).ipa; \
 			else \
-				open $(OUTPUTDIR)/net.kdt.pojavlauncher.slimmed-$(VERSION)-$(PLATFORM_NAME).ipa; \
+				open $(OUTPUTDIR)/com.air-devs.air.slimmed-$(VERSION)-$(PLATFORM_NAME).ipa; \
 			fi; \
 		fi; \
 	else \
@@ -420,7 +472,7 @@ deploy:
 package: payload
 	echo '[Amethyst v$(VERSION)] package - start'
 	if [ '$(TEAMID)' != '-1' ] && [ '$(SIGNING_TEAMID)' != '-1' ] && [ -f '$(PROVISIONING)' ] && [ '$(DETECTPLAT)' = 'Darwin' ]; then \
-		printf '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0">\n<dict>\n	<key>application-identifier</key>\n	<string>$(TEAMID).org.angelauramc.amethyst</string>\n	<key>com.apple.developer.team-identifier</key>\n	<string>$(TEAMID)</string>\n	<key>get-task-allow</key>\n	<true/>\n	<key>keychain-access-groups</key>\n	<array>\n	<string>$(TEAMID).*</string>\n	<string>com.apple.token</string>\n	</array>\n</dict>\n</plist>' > entitlements.codesign.xml; \
+		printf '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0">\n<dict>\n	<key>application-identifier</key>\n	<string>$(TEAMID).com.air-devs.air</string>\n	<key>com.apple.developer.team-identifier</key>\n	<string>$(TEAMID)</string>\n	<key>get-task-allow</key>\n	<true/>\n	<key>keychain-access-groups</key>\n	<array>\n	<string>$(TEAMID).*</string>\n	<string>com.apple.token</string>\n	</array>\n	<key>com.apple.developer.kernel.extended-virtual-addressing</key>\n	<true/>\n	<key>com.apple.developer.kernel.increased-memory-limit</key>\n	<true/>\n</dict>\n</plist>' > entitlements.codesign.xml; \
 		$(MAKE) codesign; \
 		rm -rf entitlements.codesign.xml; \
 	else \
@@ -451,7 +503,5 @@ clean:
 	rm -rf JavaApp/build
 	rm -rf $(OUTPUTDIR)
 	echo '[Amethyst v$(VERSION)] clean - end'
-
-		
 
 .PHONY: all clean check native java jre package dsym deploy help

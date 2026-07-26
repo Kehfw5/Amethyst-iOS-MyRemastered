@@ -168,14 +168,12 @@
 "preference.title.renderer.debug.auto" = "Авто: gl4 або ANGLE";
 "preference.title.renderer.debug.gl4es" = "Gl4es 1.1.4 - експортує OpenGL 2.1";
 "preference.title.renderer.debug.angle" = "ANGLE (1.17+) - експортує OpenGL 3.2 (Базовий профіль, обмежений)";
-"preference.title.renderer.debug.zink" = "Zink (Mesa 21.0) - експортує OpenGL 4.1";
+"preference.title.renderer.debug.zink" = "Zink (Mesa 25.0.7) - експортує OpenGL 4.1";
 
 "preference.detail.renderer" = "Зміни двигун візуалізації OpenGL для використання";
 
 "preference.title.resolution" = "Роздільна здатність відео (%)";
 "preference.detail.resolution" = "Дозволяє вам зменшити роздільну здатність гри.";
-"preference.title.max_framerate" = "Максимальна частота кадрів";
-"preference.detail.max_framerate" = "Дозволяє вам обмежити частоту кадрів в грі до 60 FPS на ProMotion дисплеях.";
 
 "preference.title.fullscreen_airplay" = "Повноекранний AirPlay";
 "preference.detail.fullscreen_airplay" = "Дозволяє презентувати повноекранне вікно гри на зовнішньому дисплеї, а не віддзеркалювати все, що є на екрані.";

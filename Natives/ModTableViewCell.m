@@ -1,11 +1,13 @@
 #import "ModTableViewCell.h"
 #import "ModItem.h"
 #import "ModService.h"
+#import "IconLoader.h"
 #import <QuartzCore/QuartzCore.h>
 
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wunguarded-availability-new"
-#import "UIKit+AFNetworking.h"
+// 注意：UIKit+AFNetworking 已移除，改用 IconLoader 统一加载器
+// （AFNetworking 仅内存缓存无降采样，IconLoader 提供双层缓存+降采样+CDN镜像+并发控制）
 #pragma clang diagnostic pop
 
 @interface ModTableViewCell ()
@@ -19,7 +21,9 @@
     if (self = [super initWithStyle:style reuseIdentifier:reuseIdentifier]) {
         self.selectionStyle = UITableViewCellSelectionStyleNone;
         self.backgroundColor = [UIColor clearColor]; // Use clear color for custom background view
-        self.contentView.backgroundColor = [UIColor systemBackgroundColor];
+        // contentView 也设为 clearColor：由 BackgroundManager.applyEffectToCell: 统一注入
+        // 毛玻璃 backgroundView 或半透明 backgroundColor，避免遮挡自定义启动器背景
+        self.contentView.backgroundColor = [UIColor clearColor];
 
         // --- Initialization of UI Elements ---
         _modIconView = [self createImageViewWithCornerRadius:4];
@@ -129,22 +133,35 @@
 - (UIImage *)loadImageWithName:(NSString *)imageName {
     NSBundle *bundle = [NSBundle mainBundle];
     NSString *resourcePath = [bundle resourcePath];
-    
-    // Check if dark mode is active
-    BOOL isDarkMode = self.traitCollection.userInterfaceStyle == UIUserInterfaceStyleDark;
-    
-    // Try to load appropriate theme version first
-    NSString *theme = isDarkMode ? @"dark" : @"light";
-    NSString *imagePath = [resourcePath stringByAppendingPathComponent:[NSString stringWithFormat:@"ModLoaderIcons/%@_%@.png", imageName, theme]];
-    
-    UIImage *image = [UIImage imageWithContentsOfFile:imagePath];
-    if (!image) {
-        // Fallback to opposite theme if preferred theme doesn't exist
-        theme = isDarkMode ? @"light" : @"dark";
-        imagePath = [resourcePath stringByAppendingPathComponent:[NSString stringWithFormat:@"ModLoaderIcons/%@_%@.png", imageName, theme]];
-        image = [UIImage imageWithContentsOfFile:imagePath];
+
+    // 修复模组加载器图标不显示：原实现只查找 ModLoaderIcons/{name}_{light|dark}.png 主题文件，
+    // 但 HMCL 官方图标是标准单文件 ModLoaderIcons/{name}.png（不区分深浅色），
+    // 导致 fabric/forge/neoforge/quilt/optifine 的 PNG 永远找不到，回退到空白或自编图标。
+    // 现在改为：优先加载标准单文件 → 再尝试主题文件 → 最后返回 nil。
+    // 与 ModLoaderIconHelper 的 iconImageForLoader: 加载顺序保持一致。
+
+    // 1. 优先加载 HMCL 官方标准单文件（不区分深浅色主题）
+    NSString *standardPath = [resourcePath stringByAppendingPathComponent:
+                              [NSString stringWithFormat:@"ModLoaderIcons/%@.png", imageName]];
+    UIImage *image = [UIImage imageWithContentsOfFile:standardPath];
+    if (image) {
+        return image;
     }
-    
+
+    // 2. 回退到旧格式主题文件（区分 light/dark）
+    BOOL isDarkMode = self.traitCollection.userInterfaceStyle == UIUserInterfaceStyleDark;
+    NSString *theme = isDarkMode ? @"dark" : @"light";
+    NSString *themedPath = [resourcePath stringByAppendingPathComponent:
+                            [NSString stringWithFormat:@"ModLoaderIcons/%@_%@.png", imageName, theme]];
+    image = [UIImage imageWithContentsOfFile:themedPath];
+    if (!image) {
+        // 3. 尝试相反主题
+        theme = isDarkMode ? @"light" : @"dark";
+        themedPath = [resourcePath stringByAppendingPathComponent:
+                      [NSString stringWithFormat:@"ModLoaderIcons/%@_%@.png", imageName, theme]];
+        image = [UIImage imageWithContentsOfFile:themedPath];
+    }
+
     return image;
 }
 
@@ -225,16 +242,47 @@
 
 #pragma mark - Configuration
 
+- (void)prepareForReuse {
+    [super prepareForReuse];
+    // 取消该 cell 上正在进行的图标加载请求（cell 复用时旧请求不应继续占用网络与回调）
+    // 对应 Glide 的 clear() + ZL2 Compose 组合自动取消
+    [IconLoader cancelLoadingForImageView:_modIconView];
+    _modIconView.image = [UIImage systemImageNamed:@"puzzlepiece.extension"];
+    _loaderIconView.image = nil;
+    _nameLabel.text = nil;
+    _modVersionLabel.text = nil;
+    _gameVersionLabel.text = nil;
+    _descLabel.text = nil;
+    _authorLabel.text = nil;
+    _statsLabel.text = nil;
+
+    // 清除旧的 loader badges
+    for (UIView *view in self.loaderBadgesStackView.arrangedSubviews) {
+        [self.loaderBadgesStackView removeArrangedSubview:view];
+        [view removeFromSuperview];
+    }
+}
+
 - (void)configureWithMod:(ModItem *)mod displayMode:(ModTableViewCellDisplayMode)mode {
     self.currentMod = mod;
 
     _nameLabel.text = mod.displayName ?: mod.fileName;
 
     if (mod.icon) {
+        // 本地已加载的图标（如从 jar 内解析的 pack.png）：直接显示，无需网络加载
+        [IconLoader cancelLoadingForImageView:_modIconView];
         _modIconView.image = mod.icon;
     } else if (mod.iconURL) {
-        [_modIconView setImageWithURL:[NSURL URLWithString:mod.iconURL] placeholderImage:[UIImage systemImageNamed:@"puzzlepiece.extension"]];
+        // 在线图标：使用 IconLoader 加载（双层缓存 + 降采样 + CDN 镜像）
+        // 图标显示尺寸 36x36（在 setupConstraints 中定义），降采样到此尺寸避免按原图解码
+        UIImage *placeholder = [UIImage systemImageNamed:@"puzzlepiece.extension"];
+        [IconLoader loadIconForImageView:_modIconView
+                                     URL:mod.iconURL
+                             placeholder:placeholder
+                                fallback:placeholder
+                               targetSize:CGSizeMake(36, 36)];
     } else {
+        [IconLoader cancelLoadingForImageView:_modIconView];
         _modIconView.image = [UIImage systemImageNamed:@"puzzlepiece.extension"];
     }
 
@@ -339,7 +387,7 @@
     formatter.numberStyle = NSNumberFormatterDecimalStyle;
     NSString *downloadsStr = [formatter stringFromNumber:mod.downloads ?: @0];
 
-    _statsLabel.text = [NSString stringWithFormat:@"%@ downloads", downloadsStr];
+    _statsLabel.text = [NSString stringWithFormat:@"%@ 下载", downloadsStr];
 }
 
 

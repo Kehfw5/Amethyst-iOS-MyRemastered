@@ -7,6 +7,7 @@
 #import "TrackedTextField.h"
 #import "UnzipKit.h"
 #import "ios_uikit_bridge.h"
+#import "BackgroundManager.h"
 #include "glfw_keycodes.h"
 #include "utils.h"
 
@@ -218,6 +219,11 @@ void AWTInputBridge_sendKey(int keycode) {
 @property(nonatomic) ControlLayout* ctrlView;
 @property(nonatomic) PLLogOutputView* logOutputView;
 @property(nonatomic) ScrollableSurfaceView* surfaceScrollView;
+// 关键修复（UI 累积异常）：CADisplayLink 与其所在线程的 runloop 之前未持有引用，
+// 无法在 dealloc 中 invalidate，导致每次进入 JavaGUI 界面都泄漏一条线程 +
+// 一个 CADisplayLink + 对 surfaceView 的强引用。多次进入后线程数累积，UI 卡顿。
+@property(nonatomic, strong) CADisplayLink *displayLink;
+@property(nonatomic, strong) NSThread *displayLinkThread;
 
 @end
 
@@ -225,6 +231,8 @@ void AWTInputBridge_sendKey(int keycode) {
 
 - (void)viewDidLoad {
     [super viewDidLoad];
+    // 适配自定义启动器背景：将当前视图控制器透明化，使全局背景壁纸能够透出
+    [[BackgroundManager sharedManager] makeViewControllerTransparent:self];
     self.view.backgroundColor = UIColor.blackColor;
     [self.navigationController setNavigationBarHidden:YES animated:NO];
     [self setNeedsUpdateOfScreenEdgesDeferringSystemGestures];
@@ -299,24 +307,89 @@ void AWTInputBridge_sendKey(int keycode) {
     setenv("POJAV_SKIP_JNI_GLFW", "1", 1);
  
     // Register the display loop
-    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        CADisplayLink *displayLink = [CADisplayLink displayLinkWithTarget:surfaceView selector:@selector(refreshBuffer)];
+    // 关键修复（UI 累积异常）：之前用 dispatch_async + [NSRunLoop.currentRunLoop run] 永久阻塞线程，
+    // CADisplayLink 无法被 invalidate，每次进入 JavaGUI 界面都泄漏一条线程 + displayLink + surfaceView。
+    // 现改用 NSThread，在 dealloc 中通过 CFRunLoopStop 停止 runloop 并 invalidate displayLink。
+    __weak typeof(self) weakSelf = self;
+    NSThread *dlThread = [[NSThread alloc] initWithBlock:^{
+        CADisplayLink *dl = [CADisplayLink displayLinkWithTarget:surfaceView selector:@selector(refreshBuffer)];
         if (@available(iOS 15.0, tvOS 15.0, *)) {
-            if(getPrefBool(@"video.max_framerate")) {
-                displayLink.preferredFrameRateRange = CAFrameRateRangeMake(30, 120, 120);
-            } else {
-                displayLink.preferredFrameRateRange = CAFrameRateRangeMake(30, 60, 60);
-            }
+            // max_framerate 选项已移除：始终采用 30-120Hz 自适应范围。
+            // 屏幕硬件决定实际帧率（60Hz 设备仍为 60，120Hz ProMotion 设备可达 120），
+            // 不再人为限制在 60FPS。配合 disable_game_vsync 完整解锁 VSync 后帧率可超过屏幕刷新率。
+            dl.preferredFrameRateRange = CAFrameRateRangeMake(30, 120, 120);
         }
-        [displayLink addToRunLoop:NSRunLoop.currentRunLoop forMode:NSRunLoopCommonModes];
-        [NSRunLoop.currentRunLoop run];
-    });
+        [dl addToRunLoop:NSRunLoop.currentRunLoop forMode:NSRunLoopCommonModes];
+        // 存到 self 属性供 dealloc invalidate。weak self 在线程 block 内安全。
+        __strong typeof(weakSelf) strongSelf = weakSelf;
+        if (strongSelf) {
+            strongSelf.displayLink = dl;
+        }
+        // runloop 会阻塞直到外部调用 CFRunLoopStop 停止它
+        CFRunLoopRun();
+        // runloop 停止后清理 displayLink
+        [dl invalidate];
+    }];
+    self.displayLinkThread = dlThread;
+    [dlThread start];
 
     
 dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        launchJVM(nil, self.filepath, windowWidth, windowHeight, _requiredJavaVersion);
+        // 走 getter 兜底：若调用方未触发预解析，getter 会现场解析 manifest
+        // 避免 ivar=0 时 launchJVM 用 minVersion=0 匹配到错误的 JRE（如 Java 8 跑 NeoForge installer）
+        int javaVer = self.requiredJavaVersion;
+        if (javaVer <= 0) {
+            // 解析失败，getter 已弹错误提示，回主线程 dismiss VC 避免黑屏
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [self.presentingViewController dismissViewControllerAnimated:YES completion:nil];
+            });
+            return;
+        }
+        launchJVM(nil, self.filepath, windowWidth, windowHeight, javaVer);
         _requiredJavaVersion = 0;
     });
+
+    // 监听背景 UI 效果变化通知，当用户切换背景效果（半透明/毛玻璃）时重新应用透明化
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(reapplyBackgroundEffect)
+                                                 name:@"BackgroundUIEffectChanged"
+                                               object:nil];
+}
+
+/// 背景效果改变时重新应用透明化（由 BackgroundUIEffectChanged 通知触发）
+- (void)reapplyBackgroundEffect {
+    [[BackgroundManager sharedManager] makeViewControllerTransparent:self];
+}
+
+- (void)dealloc {
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
+
+    // 关键修复（UI 累积异常）：停止 displayLink 线程及其 runloop。
+    // 之前未 invalidate displayLink，且 runloop 用 [NSRunLoop run] 永久阻塞，
+    // 导致每次进入 JavaGUI 界面都泄漏一条线程 + displayLink + surfaceView 强引用。
+    //
+    // 清理步骤：
+    // 1. invalidate displayLink（从 runloop 移除该源）
+    // 2. 在 displayLinkThread 上执行 CFRunLoopStop，让 CFRunLoopRun() 返回，线程 block 结束
+    // 3. 清理静态 surfaceView 引用
+    [self.displayLink invalidate];
+    self.displayLink = nil;
+    if (self.displayLinkThread) {
+        // 在子线程上执行 CFRunLoopStop(CFRunLoopGetCurrent())，让 CFRunLoopRun() 返回
+        [self performSelector:@selector(_stopDisplayLinkRunLoop)
+                     onThread:self.displayLinkThread
+                   withObject:nil
+                waitUntilDone:NO];
+        self.displayLinkThread = nil;
+    }
+    @try {
+        surfaceView = nil;
+    } @catch (NSException *e) {}
+}
+
+/// 在 displayLinkThread 上执行，停止该线程的 runloop
+- (void)_stopDisplayLinkRunLoop {
+    CFRunLoopStop(CFRunLoopGetCurrent());
 }
 
 - (void)loadCustomControls {
@@ -382,12 +455,16 @@ dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
     NSArray *manifestLines = [manifestStr componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet];
     NSString *mainClass;
     for (NSString *line in manifestLines) {
-        if ([line hasPrefix:@"Main-Class: "]) {
-            mainClass = [line substringFromIndex:12];
+        // 容错：去除行尾 \r（Windows CRLF 换行会残留 \r）和首尾空白
+        NSString *trimmed = [line stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+        if ([trimmed hasPrefix:@"Main-Class:"]) {
+            // Main-Class: 后可能有 0~N 个空格，规范允许任意空白
+            mainClass = [[trimmed substringFromIndex:@"Main-Class:".length]
+                stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
             break;
         }
     }
-    if (!mainClass) {
+    if (!mainClass || mainClass.length == 0) {
         [self showErrorMessage:[NSString stringWithFormat:
             localize(@"java.error.missing_main_class", nil), self.filepath.lastPathComponent]];
         return _requiredJavaVersion = 0;
@@ -400,19 +477,36 @@ dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
         [self showErrorMessage:error.localizedDescription];
         return _requiredJavaVersion = 0;
     }
+    // 越界保护：class 文件至少需要 8 字节（magic 4 + minor 2 + major 2）
+    if (mainClassData.length < 8) {
+        [self showErrorMessage:[NSString stringWithFormat:@"Invalid class file: too small (%lu bytes)", (unsigned long)mainClassData.length]];
+        return _requiredJavaVersion = 0;
+    }
 
-    uint32_t magic = OSSwapConstInt32(*(uint32_t*)mainClassData.bytes);
+    // 用 memcpy 读取避免未对齐内存访问（NSData.bytes 不保证 2/4 字节对齐）
+    uint32_t magic;
+    memcpy(&magic, mainClassData.bytes, sizeof(magic));
+    magic = OSSwapConstInt32(magic);
     if (magic != 0xCAFEBABE) {
         [self showErrorMessage:[NSString stringWithFormat:@"Invalid magic number: 0x%x", magic]];
         return _requiredJavaVersion = 0;
     }
 
-    uint16_t *version = (uint16_t *)(mainClassData.bytes+sizeof(magic));
-    uint16_t minorVer = OSSwapConstInt16(version[0]);
-    uint16_t majorVer = OSSwapConstInt16(version[1]);
+    uint16_t minorVer, majorVer;
+    memcpy(&minorVer, (const uint8_t *)mainClassData.bytes + sizeof(magic), sizeof(minorVer));
+    memcpy(&majorVer, (const uint8_t *)mainClassData.bytes + sizeof(magic) + sizeof(minorVer), sizeof(majorVer));
+    minorVer = OSSwapConstInt16(minorVer);
+    majorVer = OSSwapConstInt16(majorVer);
     NSLog(@"[ModInstaller] Main class version: %u.%u", majorVer, minorVer);
 
-    // Minecraft version to Java version mapping:
+    // 字节码版本下界保护：class file major version 范围合理值是 45~70+
+    // Java 1.0 = 45, Java 8 = 52, Java 17 = 61, Java 21 = 65
+    if (majorVer < 45 || majorVer > 70) {
+        [self showErrorMessage:[NSString stringWithFormat:@"Invalid class file version: %u.%u", majorVer, minorVer]];
+        return _requiredJavaVersion = 0;
+    }
+
+    // Class file major version to Java version mapping:
     // Java 8 (version 52) = Minecraft 1.12 and earlier
     // Java 16 (version 60) = Minecraft 1.17 and later
     // Java 17 (version 61) = Minecraft 1.18 and later

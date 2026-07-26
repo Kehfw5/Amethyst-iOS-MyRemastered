@@ -1,6 +1,7 @@
 #import "LauncherNavigationController.h"
 #import "LauncherPreferences.h"
 #import "LauncherPrefGameDirViewController.h"
+#import "BackgroundManager.h"
 #import "NSFileManager+NRFileManager.h"
 #import "PLProfiles.h"
 #import "ios_uikit_bridge.h"
@@ -35,6 +36,17 @@
             [self.array addObject:file];
         }
     }
+
+    // 适配自定义启动器背景：将当前视图控制器透明化，让全局背景（图片/视频）能够透出显示。
+    // 放在 tableView 重新创建之后调用，确保 makeViewControllerTransparent 处理的是最终的 tableView。
+    [[BackgroundManager sharedManager] makeViewControllerTransparent:self];
+
+    // 监听背景 UI 效果变化通知：当用户在背景设置中切换毛玻璃/半透明或调整透明度时，
+    // 重新调用 makeViewControllerTransparent 以应用最新的视觉效果，保证背景始终正确透出。
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(reapplyBackgroundEffect)
+                                                 name:@"BackgroundUIEffectChanged"
+                                               object:nil];
 }
 
 - (void)changeSelectionTo:(NSString *)name {
@@ -43,11 +55,40 @@
     setPrefObject(@"general.game_directory", name);
     NSString *multidirPath = [NSString stringWithFormat:@"%s/instances/%@", getenv("POJAV_HOME"), name];
     NSString *lasmPath = @(getenv("POJAV_GAME_DIR"));
-    [NSFileManager.defaultManager removeItemAtPath:lasmPath error:nil];
-    [NSFileManager.defaultManager createSymbolicLinkAtPath:lasmPath withDestinationPath:multidirPath error:nil];
+    NSError *removeError = nil;
+    [NSFileManager.defaultManager removeItemAtPath:lasmPath error:&removeError];
+    // removeItem 失败不一定是致命的（首次切换时 lasmPath 可能不存在），忽略并继续
+
+    NSError *linkError = nil;
+    BOOL linkOK = [NSFileManager.defaultManager createSymbolicLinkAtPath:lasmPath
+                                                       withDestinationPath:multidirPath
+                                                                     error:&linkError];
+    if (!linkOK) {
+        // 符号链接创建失败：POJAV_GAME_DIR 仍是断链，后续所有路径都会失败。
+        // 提示用户并尽早返回，避免把状态搞得更乱。
+        NSLog(@"[GameDir] createSymbolicLink failed: %@", linkError.localizedDescription);
+        showDialog(localize(@"Error", nil),
+                   [NSString stringWithFormat:@"切换游戏目录失败：无法创建符号链接\n\n%@", linkError.localizedDescription]);
+        return;
+    }
     [NSFileManager.defaultManager changeCurrentDirectoryPath:lasmPath];
+    // 切换 pref.instancePath 到新目录的 launcher_preferences.plist
+    // （内部会基于 POJAV_GAME_DIR 重新计算，已修复之前需重启启动器的 bug）
     toggleIsolatedPref(NO);
-    [self.navigationController performSelector:@selector(reloadProfileList)];
+
+    // 刷新 PLProfiles 缓存，确保后续读取的是新游戏目录的 launcher_profiles.json
+    [PLProfiles updateCurrent];
+
+    // 尝试直接调用 reloadProfileList，如果 navigationController 响应该选择器
+    if ([self.navigationController respondsToSelector:@selector(reloadProfileList)]) {
+        [self.navigationController performSelector:@selector(reloadProfileList)];
+    } else {
+        // 否则发送通知
+        [[NSNotificationCenter defaultCenter] postNotificationName:@"ReloadProfileList" object:nil];
+    }
+
+    // 发送通知刷新版本配置和编辑 profile 界面
+    [[NSNotificationCenter defaultCenter] postNotificationName:@"SelectedProfileChanged" object:nil];
 }
 
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section
@@ -298,6 +339,17 @@ viewForFooterInSection:(NSInteger)section
     frame.size.width = MAX(50, textField.intrinsicContentSize.width + 10);
     textField.frame = frame;
     return YES;
+}
+
+/// 重新应用背景效果：当 BackgroundUIEffectChanged 通知到达时调用，
+/// 通过 BackgroundManager 重新设置当前视图控制器的透明度/毛玻璃效果，
+/// 确保 tableView 背景透明、全局背景能够正常透出。
+- (void)reapplyBackgroundEffect {
+    [[BackgroundManager sharedManager] makeViewControllerTransparent:self];
+}
+
+- (void)dealloc {
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
 }
 
 @end

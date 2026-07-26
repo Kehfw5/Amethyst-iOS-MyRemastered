@@ -7,6 +7,7 @@
 #import "UIKit+hook.h"
 #import "ios_uikit_bridge.h"
 #import "utils.h"
+#import "BackgroundManager.h"
 
 @interface LauncherProfileEditorViewController()<UIPickerViewDataSource, UIPickerViewDelegate>
 @property(nonatomic) NSString* oldName;
@@ -29,10 +30,23 @@
     self.navigationController.modalInPresentation = YES;
     self.prefSectionsVisible = YES;
 
+    // 设置半透明背景
+    [[BackgroundManager sharedManager] applyEffectToView:self.view];
+    
+    // 设置导航栏半透明样式
+    [[BackgroundManager sharedManager] applyEffectToNavigationBar:self.navigationController.navigationBar];
+    self.navigationController.navigationBar.tintColor = [UIColor systemBlueColor];
+
     // Setup preference getter and setter
     __weak LauncherProfileEditorViewController *weakSelf = self;
     self.getPreference = ^id(NSString *section, NSString *key){
-        NSString *value = weakSelf.profile[key];
+        id rawValue = weakSelf.profile[key];
+        // 兼容 NSDictionary 类型的 javaVersion（旧版直装器写入）
+        if ([rawValue isKindOfClass:[NSDictionary class]]) {
+            id major = rawValue[@"majorVersion"];
+            return major ? [major description] : @"(default)";
+        }
+        NSString *value = rawValue;
         if (value.length > 0 || ![weakSelf isPickFieldAtSection:section key:key]) {
             return value;
         } else {
@@ -149,6 +163,45 @@
     ];
 
     [super viewDidLoad];
+    // 适配自定义启动器背景：将当前视图控制器透明化，让全局背景（图片/视频）能够透出显示。
+    // 此处在上方已通过 applyEffectToView 为视图添加了毛玻璃/半透明效果，
+    // 这里再调用 makeViewControllerTransparent 以确保 tableView 背景也被置为透明。
+    [[BackgroundManager sharedManager] makeViewControllerTransparent:self];
+
+    // 监听版本列表刷新通知
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(reloadVersionList)
+                                                 name:@"ReloadProfileList"
+                                               object:nil];
+
+    // 监听背景 UI 效果变化通知：当用户在背景设置中切换毛玻璃/半透明或调整透明度时，
+    // 重新调用 makeViewControllerTransparent 以应用最新的视觉效果，保证背景始终正确透出。
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(reapplyBackgroundEffect)
+                                                 name:@"BackgroundUIEffectChanged"
+                                               object:nil];
+}
+
+- (void)dealloc {
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
+}
+
+/// 重新应用背景效果：当 BackgroundUIEffectChanged 通知到达时调用，
+/// 通过 BackgroundManager 重新设置当前视图控制器的透明度/毛玻璃效果，
+/// 确保 tableView 背景透明、全局背景能够正常透出。
+- (void)reapplyBackgroundEffect {
+    [[BackgroundManager sharedManager] makeViewControllerTransparent:self];
+}
+
+- (void)reloadVersionList {
+    // 清除当前版本列表缓存，下次打开选择器时会重新加载
+    self.versionList = nil;
+    self.versionSelectedAt = -1;
+    
+    // 如果版本选择器正在显示，立即刷新
+    if (self.versionPickerView && self.versionPickerView.window) {
+        [self changeVersionType:nil];
+    }
 }
 
 - (void)actionClose {
@@ -188,11 +241,11 @@
     }
 
     [PLProfiles.current save];
-    [self actionClose];
 
-    // Call LauncherProfilesViewController's viewWillAppear
-    UINavigationController *navVC = (id) ((UISplitViewController *)self.presentingViewController).viewControllers[1];
-    [navVC.viewControllers[0] viewWillAppear:NO];
+    // 发送通知刷新配置文件列表
+    [[NSNotificationCenter defaultCenter] postNotificationName:@"SelectedProfileChanged" object:self.profile[@"name"]];
+    
+    [self actionClose];
 }
 
 - (BOOL)isPickFieldAtSection:(NSString *)section key:(NSString *)key {

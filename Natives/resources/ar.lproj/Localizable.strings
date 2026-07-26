@@ -170,14 +170,12 @@
 "preference.title.renderer.debug.auto" = "تلقائياً: gl4es أو ANGLE";
 "preference.title.renderer.debug.gl4es" = "holy gl4es - exports OpenGL 2.1";
 "preference.title.renderer.debug.angle" = "ANGLE (1.17+) - الصادرات OpenGL 3.2 (موجز أساسي محدود)";
-"preference.title.renderer.debug.zink" = "Zink (Mesa 21.0) - exports OpenGL 4.1";
+"preference.title.renderer.debug.zink" = "Zink (Mesa 25.0.7) - exports OpenGL 4.1";
 
 "preference.detail.renderer" = "تغيير محرك عرض OpenGL للاستخدام. يتم تعطيل الزنك مؤقتاً على iOS 16 وفيما بعد لتشخيص المشكلات.";
 
 "preference.title.resolution" = "الدقة (%)";
 "preference.detail.resolution" = "يسمح لك بتقليل دقة اللعبة.";
-"preference.title.max_framerate" = "الحد الأقصى للإطارات";
-"preference.detail.max_framerate" = "يسمح لك بالحد من إطارات اللعبة إلى 60FPS على عروض ProMotion.";
 
 "preference.title.fullscreen_airplay" = "AirPlay ملء الشاشة";
 "preference.detail.fullscreen_airplay" = "يسمح بتقديم نافذة لعبة ملء الشاشة على الشاشة الخارجية بدلاً من عكس كل شيء على الشاشة.";

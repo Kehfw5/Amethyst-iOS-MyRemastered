@@ -29,8 +29,17 @@ typedef void(^ModDownloadHandler)(NSError * _Nullable error); // Added for downl
 // --- Online Mod Downloading ---
 - (void)downloadMod:(ModItem *)mod toProfile:(NSString *)profileName completion:(ModDownloadHandler)completion;
 
+/// 下载 Mod 并上报进度
+- (void)downloadMod:(ModItem *)mod
+          toProfile:(NSString *)profileName
+            progress:(void (^)(NSProgress *downloadProgress))progress
+          completion:(ModDownloadHandler)completion;
+
 // --- Utility ---
 - (NSString *)iconCachePathForURL:(NSString *)urlString;
+
+/// 获取当前 profile 的 mods 目录，不存在时自动创建
+- (nullable NSString *)ensureModsFolderForProfile:(NSString *)profileName error:(NSError **)error;
 
 @end
 

@@ -12,11 +12,20 @@
 #import "PLProfiles.h"
 #import "ModItem.h"
 #import "UnzipKit.h"
+#import "DownloadTaskManager.h"
+#import "DownloadTaskItem.h"
+#import "LauncherPreferences.h"
 
 @interface ModService () <NSURLSessionDownloadDelegate>
 @property (nonatomic, strong) NSURLSession *downloadSession;
 @property (nonatomic, strong) NSMutableDictionary<NSURLSessionTask *, ModDownloadHandler> *downloadCompletionHandlers;
 @property (nonatomic, strong) NSMutableDictionary<NSURLSessionTask *, NSString *> *downloadDestinationPaths;
+<<<<<<< HEAD
+=======
+@property (nonatomic, strong) NSMutableDictionary<NSURLSessionTask *, void(^)(NSProgress *)> *downloadProgressHandlers;
+@property (nonatomic, strong) NSMutableDictionary<NSURLSessionTask *, DownloadTaskItem *> *downloadTaskItems;
+@property (nonatomic, strong) NSMutableDictionary<NSURLSessionTask *, NSMutableDictionary *> *downloadProgressSnapshots;
+>>>>>>> author-fork/main
 
 // 缓存
 @property (nonatomic, strong) NSMutableDictionary<NSString *, ModItem *> *metadataCache;
@@ -125,12 +134,26 @@
         config.timeoutIntervalForRequest = 120.0;
         config.timeoutIntervalForResource = 300.0;
         config.allowsCellularAccess = YES;
+<<<<<<< HEAD
         // 提高并发连接数限制（默认4，设为6可提升速度）
         config.HTTPMaximumConnectionsPerHost = 6;
+=======
+        // 参考 FCL/ZalithLauncher2：提升并发连接数 6 → 16，
+        // 与 MinecraftResourceDownloadTask 对齐，在同时下载多个 Mod 或并发拉取
+        // Mod 元数据时显著提升吞吐量。下载完整性由 JAR 文件本身的格式校验保证
+        // （未引入分片下载，避免破坏现有的下载完成回调流程）。
+        config.HTTPMaximumConnectionsPerHost = 16;
+>>>>>>> author-fork/main
         
         _downloadSession = [NSURLSession sessionWithConfiguration:config delegate:self delegateQueue:nil];
         _downloadCompletionHandlers = [NSMutableDictionary dictionary];
         _downloadDestinationPaths = [NSMutableDictionary dictionary];
+<<<<<<< HEAD
+=======
+        _downloadProgressHandlers = [NSMutableDictionary dictionary];
+        _downloadTaskItems = [NSMutableDictionary dictionary];
+        _downloadProgressSnapshots = [NSMutableDictionary dictionary];
+>>>>>>> author-fork/main
 
         // 初始化缓存
         _metadataCache = [NSMutableDictionary dictionary];
@@ -179,24 +202,58 @@
     return data;
 }
 
+<<<<<<< HEAD
 - (nullable NSString *)existingModsFolderForProfile:(NSString *)profileName {
     NSString *profile = profileName.length ? profileName : @"default";
     NSFileManager *fm = [NSFileManager defaultManager];
+=======
+/// 解析 profile 的 gameDir 为绝对路径。
+/// profile gameDir 通常是相对路径（如 "./custom_gamedir/{name}"），需相对于 POJAV_GAME_DIR 解析。
+/// 之前直接使用相对路径会导致 mods 文件夹找不到（fileExistsAtPath 对相对路径基于 cwd 解析，
+/// 而 cwd 不一定是 POJAV_GAME_DIR）。
+- (nullable NSString *)resolveAbsoluteGameDirForProfile:(NSString *)profileName {
+    NSString *profile = profileName.length ? profileName : @"default";
+>>>>>>> author-fork/main
     @try {
         NSDictionary *profiles = PLProfiles.current.profiles;
         NSDictionary *prof = profiles[profile];
-        if ([prof isKindOfClass:[NSDictionary class]]) {
-            NSString *gameDir = prof[@"gameDir"];
-            if ([gameDir isKindOfClass:[NSString class]] && gameDir.length > 0) {
-                NSString *modsPath = [gameDir stringByAppendingPathComponent:@"mods"];
-                BOOL isDir = NO;
-                if ([fm fileExistsAtPath:modsPath isDirectory:&isDir] && isDir) {
-                    return modsPath;
-                }
-            }
+        if (![prof isKindOfClass:[NSDictionary class]]) return nil;
+        NSString *gameDir = prof[@"gameDir"];
+        if (![gameDir isKindOfClass:[NSString class]] || gameDir.length == 0) return nil;
+        if ([gameDir isEqualToString:@"."]) {
+            // "." 表示主目录
+            const char *env = getenv("POJAV_GAME_DIR");
+            return env ? [NSString stringWithUTF8String:env] : NSHomeDirectory();
         }
-    } @catch (NSException *ex) { }
+        if ([gameDir isAbsolutePath]) {
+            return gameDir;
+        }
+        // 相对路径，相对于 POJAV_GAME_DIR 解析
+        const char *env = getenv("POJAV_GAME_DIR");
+        NSString *baseDir = env ? [NSString stringWithUTF8String:env] : NSHomeDirectory();
+        // 去掉 "./" 前缀（如果有），stringByAppendingPathComponent 能正确处理
+        NSString *cleanGameDir = [gameDir hasPrefix:@"./"] ? [gameDir substringFromIndex:2] : gameDir;
+        return [baseDir stringByAppendingPathComponent:cleanGameDir];
+    } @catch (NSException *ex) {
+        return nil;
+    }
+}
 
+- (nullable NSString *)existingModsFolderForProfile:(NSString *)profileName {
+    NSString *profile = profileName.length ? profileName : @"default";
+    NSFileManager *fm = [NSFileManager defaultManager];
+
+    // 优先用 profile gameDir（已解析为绝对路径）
+    NSString *resolvedGameDir = [self resolveAbsoluteGameDirForProfile:profile];
+    if (resolvedGameDir.length > 0) {
+        NSString *modsPath = [resolvedGameDir stringByAppendingPathComponent:@"mods"];
+        BOOL isDir = NO;
+        if ([fm fileExistsAtPath:modsPath isDirectory:&isDir] && isDir) {
+            return modsPath;
+        }
+    }
+
+    // 回退到 POJAV_GAME_DIR/mods
     const char *gameDirC = getenv("POJAV_GAME_DIR");
     if (gameDirC) {
         NSString *gameDir = [NSString stringWithUTF8String:gameDirC];
@@ -209,6 +266,55 @@
     return nil;
 }
 
+<<<<<<< HEAD
+=======
+/// 获取当前 profile 的 mods 目录，不存在时自动创建
+- (nullable NSString *)ensureModsFolderForProfile:(NSString *)profileName error:(NSError **)error {
+    NSString *profile = profileName.length ? profileName : @"default";
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSString *modsPath = nil;
+
+    // 优先用 profile gameDir（已解析为绝对路径）
+    NSString *resolvedGameDir = [self resolveAbsoluteGameDirForProfile:profile];
+    if (resolvedGameDir.length > 0) {
+        modsPath = [resolvedGameDir stringByAppendingPathComponent:@"mods"];
+    }
+
+    if (!modsPath) {
+        const char *gameDirC = getenv("POJAV_GAME_DIR");
+        if (gameDirC) {
+            NSString *gameDir = [NSString stringWithUTF8String:gameDirC];
+            modsPath = [gameDir stringByAppendingPathComponent:@"mods"];
+        }
+    }
+
+    if (!modsPath) {
+        if (error) {
+            *error = [NSError errorWithDomain:@"ModService" code:1 userInfo:@{NSLocalizedDescriptionKey: @"无法确定游戏目录"}];
+        }
+        return nil;
+    }
+
+    BOOL isDir = NO;
+    if (![fm fileExistsAtPath:modsPath isDirectory:&isDir]) {
+        // 目录不存在，创建
+        NSError *createError = nil;
+        [fm createDirectoryAtPath:modsPath withIntermediateDirectories:YES attributes:nil error:&createError];
+        if (createError) {
+            if (error) *error = createError;
+            return nil;
+        }
+        NSLog(@"[ModService] 已创建 mods 目录: %@", modsPath);
+    } else if (!isDir) {
+        if (error) {
+            *error = [NSError errorWithDomain:@"ModService" code:2 userInfo:@{NSLocalizedDescriptionKey: [NSString stringWithFormat:@"%@ 不是目录", modsPath]}];
+        }
+        return nil;
+    }
+    return modsPath;
+}
+
+>>>>>>> author-fork/main
 // ---------- 缓存方法 ----------
 - (BOOL)needsRescanForPath:(NSString *)path {
     __block BOOL needs = YES;
@@ -421,11 +527,19 @@
 
 // ---------- 下载（关键修复已应用：使用 defaultSessionConfiguration）----------
 - (void)downloadMod:(ModItem *)mod toProfile:(NSString *)profileName completion:(ModDownloadHandler)completion {
+    [self downloadMod:mod toProfile:profileName progress:nil completion:completion];
+}
+
+// ---------- 带进度回调的下载 ----------
+- (void)downloadMod:(ModItem *)mod
+          toProfile:(NSString *)profileName
+            progress:(void (^)(NSProgress *downloadProgress))progress
+          completion:(ModDownloadHandler)completion {
     NSString *modsFolder = [self existingModsFolderForProfile:profileName];
     if (!modsFolder) {
         if (completion) {
             NSError *error = [NSError errorWithDomain:@"ModServiceError" code:1 userInfo:@{NSLocalizedDescriptionKey:@"无法找到 Mods 文件夹。"}];
-            completion(error);
+            dispatch_async(dispatch_get_main_queue(), ^{ completion(error); });
         }
         return;
     }
@@ -434,7 +548,7 @@
     if (!url) {
         if (completion) {
             NSError *error = [NSError errorWithDomain:@"ModServiceError" code:2 userInfo:@{NSLocalizedDescriptionKey:@"无效的下载链接。"}];
-            completion(error);
+            dispatch_async(dispatch_get_main_queue(), ^{ completion(error); });
         }
         return;
     }
@@ -443,6 +557,52 @@
     NSURLSessionDownloadTask *task = [self.downloadSession downloadTaskWithURL:url];
     self.downloadCompletionHandlers[task] = completion;
     self.downloadDestinationPaths[task] = destinationPath;
+<<<<<<< HEAD
+=======
+    if (progress) {
+        self.downloadProgressHandlers[task] = progress;
+    }
+
+    // 注册到统一下载任务管理器（悬浮球已移除，始终注册以便下载任务列表跟踪）
+    NSString *resourceName = mod.fileName.length > 0 ? mod.fileName : (mod.displayName.length > 0 ? mod.displayName : @"mod");
+    NSString *displayName = mod.displayName.length > 0 ? mod.displayName : resourceName;
+    NSString *downloadSource = getPrefObject(@"general.download_source") ?: @"official";
+    DownloadTaskItem *taskItem = [[DownloadTaskManager sharedManager]
+        registerTaskWithResourceType:DownloadTaskResourceTypeMod
+                        resourceName:resourceName
+                         displayName:displayName
+                      downloadSource:downloadSource
+                             rawTask:task
+                      supportsResume:YES
+                             iconURL:mod.iconURL];
+    taskItem.downloadURL = mod.selectedVersionDownloadURL;
+    self.downloadTaskItems[task] = taskItem;
+    [[DownloadTaskManager sharedManager] setTaskWithId:taskItem.taskId state:DownloadTaskStateDownloading];
+
+    // 设置 retryHandler：FCL 风格重新下载，复用同一 taskItem，重建底层 NSURLSessionTask
+    __weak typeof(self) weakSelf = self;
+    NSString *capturedDestPath = destinationPath;
+    ModDownloadHandler capturedCompletion = completion;
+    void (^capturedProgress)(NSProgress *) = progress;
+    ModItem *capturedMod = mod;
+    taskItem.retryHandler = ^id(DownloadTaskItem *taskItemRef) {
+        __strong typeof(weakSelf) strongSelf = weakSelf;
+        if (!strongSelf) return nil;
+        NSURL *retryURL = [NSURL URLWithString:taskItemRef.downloadURL] ?: [NSURL URLWithString:capturedMod.selectedVersionDownloadURL];
+        if (!retryURL) return nil;
+        NSURLSessionDownloadTask *newTask = [strongSelf.downloadSession downloadTaskWithURL:retryURL];
+        strongSelf.downloadCompletionHandlers[newTask] = capturedCompletion;
+        strongSelf.downloadDestinationPaths[newTask] = capturedDestPath;
+        if (capturedProgress) {
+            strongSelf.downloadProgressHandlers[newTask] = capturedProgress;
+        }
+        strongSelf.downloadTaskItems[newTask] = taskItemRef;
+        [[DownloadTaskManager sharedManager] setTaskWithId:taskItemRef.taskId state:DownloadTaskStateDownloading];
+        [newTask resume];
+        return newTask;
+    };
+
+>>>>>>> author-fork/main
     [task resume];
 }
 
@@ -451,11 +611,18 @@
 - (void)URLSession:(NSURLSession *)session downloadTask:(NSURLSessionDownloadTask *)downloadTask didFinishDownloadingToURL:(NSURL *)location {
     ModDownloadHandler handler = self.downloadCompletionHandlers[downloadTask];
     NSString *destinationPath = self.downloadDestinationPaths[downloadTask];
+    DownloadTaskItem *taskItem = self.downloadTaskItems[downloadTask];
 
     [self.downloadCompletionHandlers removeObjectForKey:downloadTask];
     [self.downloadDestinationPaths removeObjectForKey:downloadTask];
+<<<<<<< HEAD
 
     if (!handler || !destinationPath) return;
+=======
+    [self.downloadProgressHandlers removeObjectForKey:downloadTask];
+    [self.downloadTaskItems removeObjectForKey:downloadTask];
+    [self.downloadProgressSnapshots removeObjectForKey:downloadTask];
+>>>>>>> author-fork/main
 
     NSFileManager *fm = [NSFileManager defaultManager];
     NSError *moveError = nil;
@@ -466,22 +633,105 @@
     if ([fm fileExistsAtPath:destinationPath]) {
         [fm removeItemAtPath:destinationPath error:nil];
     }
+<<<<<<< HEAD
     if (![fm moveItemAtURL:location toURL:[NSURL fileURLWithPath:destinationPath] error:&moveError]) {
         handler(moveError);
     } else {
         handler(nil);
+=======
+    BOOL success = destinationPath && [fm moveItemAtURL:location toURL:[NSURL fileURLWithPath:destinationPath] error:&moveError];
+
+    if (taskItem) {
+        if (success) {
+            [[DownloadTaskManager sharedManager] setTaskWithId:taskItem.taskId state:DownloadTaskStateCompleted];
+        } else {
+            [[DownloadTaskManager sharedManager] updateTaskWithId:taskItem.taskId error:moveError];
+            [[DownloadTaskManager sharedManager] setTaskWithId:taskItem.taskId state:DownloadTaskStateFailed];
+        }
+    }
+    if (handler) {
+        handler(success ? nil : moveError);
+>>>>>>> author-fork/main
     }
 }
 
 - (void)URLSession:(NSURLSession *)session task:(NSURLSessionTask *)task didCompleteWithError:(NSError *)error {
     if (error) {
         ModDownloadHandler handler = self.downloadCompletionHandlers[task];
+        DownloadTaskItem *taskItem = self.downloadTaskItems[task];
+        if (taskItem) {
+            [[DownloadTaskManager sharedManager] updateTaskWithId:taskItem.taskId error:error];
+            [[DownloadTaskManager sharedManager] setTaskWithId:taskItem.taskId state:DownloadTaskStateFailed];
+            [self.downloadTaskItems removeObjectForKey:task];
+            [self.downloadProgressSnapshots removeObjectForKey:task];
+        }
         if (handler) {
             handler(error);
             [self.downloadCompletionHandlers removeObjectForKey:task];
             [self.downloadDestinationPaths removeObjectForKey:task];
+            [self.downloadProgressHandlers removeObjectForKey:task];
         }
     }
+}
+
+- (void)URLSession:(NSURLSession *)session
+      downloadTask:(NSURLSessionDownloadTask *)downloadTask
+      didWriteData:(int64_t)bytesWritten
+ totalBytesWritten:(int64_t)totalBytesWritten
+totalBytesExpectedToWrite:(int64_t)totalBytesExpectedToWrite {
+    void(^progress)(NSProgress *) = self.downloadProgressHandlers[downloadTask];
+    DownloadTaskItem *taskItem = self.downloadTaskItems[downloadTask];
+    // speed/eta 声明提到 if (taskItem) 块之前，供下方构造 NSProgress 时引用
+    // （修复编译错误：之前在块内声明，块外使用导致 use of undeclared identifier）
+    double speed = 0.0;
+    NSTimeInterval eta = 0.0;
+
+    if (taskItem) {
+        double fraction = totalBytesExpectedToWrite > 0 ? (double)totalBytesWritten / (double)totalBytesExpectedToWrite : -1.0;
+        NSTimeInterval now = [NSDate date].timeIntervalSince1970;
+        NSMutableDictionary *snapshot = self.downloadProgressSnapshots[downloadTask];
+        if (snapshot) {
+            NSTimeInterval lastTime = [snapshot[@"lastTime"] doubleValue];
+            int64_t lastBytes = [snapshot[@"lastBytes"] longLongValue];
+            if (lastTime > 0 && now > lastTime) {
+                speed = (double)(totalBytesWritten - lastBytes) / (now - lastTime);
+                if (speed > 0 && totalBytesExpectedToWrite > totalBytesWritten) {
+                    eta = (double)(totalBytesExpectedToWrite - totalBytesWritten) / speed;
+                }
+            }
+        } else {
+            snapshot = [NSMutableDictionary dictionary];
+            self.downloadProgressSnapshots[downloadTask] = snapshot;
+        }
+        snapshot[@"lastTime"] = @(now);
+        snapshot[@"lastBytes"] = @(totalBytesWritten);
+
+        [[DownloadTaskManager sharedManager] updateTaskWithId:taskItem.taskId
+                                                     progress:fraction
+                                                   totalBytes:totalBytesExpectedToWrite
+                                              downloadedBytes:totalBytesWritten];
+        [[DownloadTaskManager sharedManager] updateTaskWithId:taskItem.taskId
+                                                          speed:speed
+                                        estimatedTimeRemaining:eta];
+    }
+
+    if (!progress) return;
+
+    // 在 progress 回调的 NSProgress 上设置 throughput 和 estimatedTimeRemaining，
+    // 供调用方（DownloadViewController）在 FCL 风格的下载进度卡片上显示速度和 ETA。
+    // 之前 progress 回调的 NSProgress 只有 fractionCompleted，导致进度卡片速度/ETA 永远为 0。
+    NSProgress *downloadProgress = [NSProgress progressWithTotalUnitCount:totalBytesExpectedToWrite];
+    downloadProgress.completedUnitCount = totalBytesWritten;
+    if (speed > 0) {
+        downloadProgress.throughput = @(speed);
+    }
+    if (eta > 0) {
+        downloadProgress.estimatedTimeRemaining = @(eta);
+    }
+
+    dispatch_async(dispatch_get_main_queue(), ^{
+        progress(downloadProgress);
+    });
 }
 
 @end

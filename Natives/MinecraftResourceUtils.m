@@ -17,7 +17,25 @@
         @"mainClass", @"minecraftArguments",
         @"optifineLib", @"releaseTime", @"time", @"type"
     ]];
-    inheritsFrom[@"arguments"] = json[@"arguments"];
+    // 合并 arguments 而非覆盖（参照 HMCL 的合并逻辑）
+    // 修复：原代码 inheritsFrom[@"arguments"] = json[@"arguments"] 会无条件用子版本 arguments
+    //   覆盖父版本，当子版本没有 arguments 字段时会把父版本的 arguments 清空为 nil，
+    //   导致父版本的 arguments.jvm（可能包含 26.x 新增强制 --add-opens/--add-exports）被完全忽略，
+    //   引发反射访问失败崩溃。
+    if (json[@"arguments"]) {
+        NSMutableDictionary *mergedArgs = [NSMutableDictionary dictionary];
+        // 先保留父版本的 arguments
+        if (inheritsFrom[@"arguments"]) {
+            [mergedArgs addEntriesFromDictionary:inheritsFrom[@"arguments"]];
+        }
+        // 再用子版本的 arguments 覆盖（但保留父版本中子版本没有的键）
+        if ([json[@"arguments"] isKindOfClass:[NSDictionary class]]) {
+            for (NSString *key in json[@"arguments"]) {
+                mergedArgs[key] = json[@"arguments"][key];
+            }
+        }
+        inheritsFrom[@"arguments"] = mergedArgs;
+    }
 
     for (NSMutableDictionary *lib in json[@"libraries"]) {
         NSString *libName = [lib[@"name"] substringToIndex:[lib[@"name"] rangeOfString:@":" options:NSBackwardsSearch].location];
@@ -62,9 +80,54 @@
         return 1;
     } else if ([arg hasPrefix:@"-XX:HeapDumpPath"]) {
         return 1;
+    } else if ([arg hasPrefix:@"-XstartOnFirstThread"]) {
+        // 已由启动器硬编码设置，跳过避免重复
+        return 1;
+    } else if ([arg hasPrefix:@"-Djava.system.class.loader="]) {
+        // 已由启动器硬编码设置
+        return 1;
     } else {
         return 0;
     }
+}
+
+// 评估 Mojang 版本 JSON 中的 OS 规则。
+// iOS 视作 osx（Apple 平台），因为 JVM 在 iOS 上以 macOS 兼容方式运行。
++ (BOOL)evaluateRules:(NSArray *)rules {
+    if (rules.count == 0) return YES;
+    BOOL allowed = NO;
+    for (NSDictionary *rule in rules) {
+        NSString *action = rule[@"action"];
+        NSDictionary *os = rule[@"os"];
+        NSDictionary *features = rule[@"features"];
+        // 带 features 的规则（如 is_demo_user）本启动器不支持，跳过
+        if (features.count > 0) {
+            allowed = NO;
+            continue;
+        }
+        BOOL match = YES;
+        if (os[@"name"]) {
+            // iOS 上 JVM 视为 osx 环境
+            match = [os[@"name"] isEqualToString:@"osx"];
+        }
+        if (match) {
+            allowed = [action isEqualToString:@"allow"];
+        }
+    }
+    return allowed;
+}
+
+// 将规则化的 JVM 参数项展开为字符串数组
++ (NSArray<NSString *> *)flattenJvmArg:(id)arg {
+    if ([arg isKindOfClass:NSString.class]) {
+        return @[arg];
+    } else if ([arg isKindOfClass:NSDictionary.class]) {
+        if (![self evaluateRules:arg[@"rules"]]) return @[];
+        id value = arg[@"value"];
+        if ([value isKindOfClass:NSString.class]) return @[value];
+        if ([value isKindOfClass:NSArray.class]) return value;
+    }
+    return @[];
 }
 
 + (void)tweakVersionJson:(NSMutableDictionary *)json {
@@ -81,14 +144,15 @@
         NSString *versionStr = [library[@"name"] componentsSeparatedByString:@":"][2];
         NSArray<NSString *> *version = [versionStr componentsSeparatedByString:@"."];
         if ([library[@"name"] hasPrefix:@"net.java.dev.jna:jna:"]) {
-            // Special handling for LabyMod 1.8.9 and Forge 1.12.2(?)
-            // we have libjnidispatch 5.13.0 in Frameworks directory
-            uint32_t bundledVer = 5 << 16 | 13 << 8 | 0;
-            uint32_t requiredVer = (char)version[0].intValue << 16 | (char)version[1].intValue << 8 | (char)version[2].intValue;
-            if (requiredVer > bundledVer) {
-                NSLog(@"[MCDL] Warning: JNA version required by %@ is %@ > 5.13.0, skipping JNA replacement.", json[@"id"], versionStr);
+            // 强制将 JNA 替换为 5.13.0 以保证 iOS 兼容性。
+            // MC 26.3+ 要求 JNA 5.17.0，但其 darwin-aarch64 libjnidispatch 在 iOS 上
+            // 加载 IOKit/CoreFoundation 后会导致 native crash/卡死（26.2 + JNA 5.13.0 正常）。
+            // MC 不直接使用 JNA API（通过 oshi 间接使用），5.13.0 的 API 完全兼容。
+            // PatchJNAAgent 会替换 Platform.class，与 JNA jar 版本无关。
+            if (version.count >= 3 && version[0].intValue == 5 && version[1].intValue == 13 && version[2].intValue == 0) {
                 continue;
             }
+            NSLog(@"[MCDL] Replacing JNA %@ with 5.13.0 for iOS compatibility (required by %@)", versionStr, json[@"id"]);
             library[@"name"] = @"net.java.dev.jna:jna:5.13.0";
             library[@"downloads"][@"artifact"][@"path"] = @"net/java/dev/jna/jna/5.13.0/jna-5.13.0.jar";
             library[@"downloads"][@"artifact"][@"url"] = @"https://repo1.maven.org/maven2/net/java/dev/jna/jna/5.13.0/jna-5.13.0.jar";
@@ -118,8 +182,11 @@
     client[@"name"] = [NSString stringWithFormat:@"%@.jar", json[@"id"]];
     [json[@"libraries"] addObject:client];
 
-    // Parse Forge 1.17+ additional JVM Arguments
-    if (json[@"inheritsFrom"] == nil || json[@"arguments"][@"jvm"] == nil) {
+    // 解析所有版本的官方 JVM Arguments（包括 vanilla 26.x）。
+    // 原代码仅在 inheritsFrom 存在时解析，导致 vanilla 版本的 arguments.jvm
+    // （可能包含 26.x 新增强制 --add-opens/--add-exports）被完全忽略，
+    // 引发反射访问失败崩溃。
+    if (json[@"arguments"][@"jvm"] == nil) {
         return;
     }
     json[@"arguments"][@"jvm_processed"] = [[NSMutableArray alloc] init];
@@ -129,18 +196,23 @@
         @"${version_name}": json[@"id"]
     };
     int argsToSkip = 0;
-    for (NSString *arg in json[@"arguments"][@"jvm"]) {
-        if (argsToSkip == 0) {
-            argsToSkip = [self numberOfArgsToSkipForArg:arg];
-        }
-        if (argsToSkip == 0) {
-            NSString *argStr = arg;
-            for (NSString *key in varArgMap.allKeys) {
-                argStr = [argStr stringByReplacingOccurrencesOfString:key withString:varArgMap[key]];
+    for (id rawArg in json[@"arguments"][@"jvm"]) {
+        // 展开规则化参数（dict with rules），iOS 视为 osx
+        NSArray<NSString *> *expanded = [self flattenJvmArg:rawArg];
+        if (expanded.count == 0) continue;
+        for (NSString *arg in expanded) {
+            if (argsToSkip == 0) {
+                argsToSkip = [self numberOfArgsToSkipForArg:arg];
             }
-            [json[@"arguments"][@"jvm_processed"] addObject:argStr];
-        } else {
-            argsToSkip--;
+            if (argsToSkip == 0) {
+                NSString *argStr = arg;
+                for (NSString *key in varArgMap.allKeys) {
+                    argStr = [argStr stringByReplacingOccurrencesOfString:key withString:varArgMap[key]];
+                }
+                [json[@"arguments"][@"jvm_processed"] addObject:argStr];
+            } else {
+                argsToSkip--;
+            }
         }
     }
 }

@@ -1,7 +1,10 @@
 #import "ModUpdateService.h"
 #import "installer/modpack/ModrinthAPI.h"
 #import "installer/modpack/CurseForgeAPI.h"
+<<<<<<< HEAD
 #import "MurmurHash2.h"
+=======
+>>>>>>> author-fork/main
 
 #pragma mark - ModUpdateResult 实现
 
@@ -139,18 +142,26 @@
         }
     });
 
+<<<<<<< HEAD
     // CurseForge 反查：计算文件 MurmurHash2 指纹后反查（同步方法）
+=======
+    // CurseForge 反查：使用 mod.filePath（内部使用 MurmurHash2，同步方法）
+>>>>>>> author-fork/main
     dispatch_async(self.lookupQueue, ^{
         @autoreleasepool {
             NSMutableDictionary *r = nil;
             if (mod.filePath.length > 0) {
                 @try {
+<<<<<<< HEAD
                     NSError *hashError = nil;
                     uint32_t hash = [MurmurHash2 hashOfFile:mod.filePath error:&hashError];
                     if (hash != 0 && !hashError) {
                         NSString *hashStr = [NSString stringWithFormat:@"%lu", (unsigned long)hash];
                         r = [[CurseForgeAPI sharedInstance] projectForFileHash:hashStr projectType:projectType];
                     }
+=======
+                    r = [[CurseForgeAPI sharedInstance] projectForFileHash:mod.filePath projectType:projectType];
+>>>>>>> author-fork/main
                 } @catch (NSException *exception) {
                     r = nil;
                 }
@@ -232,8 +243,13 @@
     }];
 
     // 3. 计算当前版本的发布日期（用于严格大于比较）
+<<<<<<< HEAD
     NSDate *currentDate = nil;
     if (currentVersion.datePublished.length > 0) {
+=======
+    NSDate *currentDate = [self parseISO8601:currentVersion.datePublished];
+    if (!currentDate && currentVersion.datePublished.length > 0) {
+>>>>>>> author-fork/main
         currentDate = [self parseISO8601:currentVersion.datePublished];
     }
 

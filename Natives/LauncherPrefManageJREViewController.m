@@ -7,6 +7,7 @@
 #import "UIKit+hook.h"
 #import "ios_uikit_bridge.h"
 #import "utils.h"
+#import "BackgroundManager.h"
 
 #include <dlfcn.h>
 #include <lzma.h>
@@ -43,12 +44,45 @@ static WFWorkflowProgressView* currentProgressView;
 @implementation LauncherPrefManageJREViewController
 
 + (LauncherPrefManageJREViewController *)currentInstance {
-    UISplitViewController *splitVC = (id)currentVC();
-    LauncherNavigationController *nav = (id)splitVC.viewControllers[1];
-    if (![nav.topViewController isKindOfClass:LauncherPrefManageJREViewController.class]) {
+    // 修复 #41: currentVC() 不一定是 UISplitViewController（在设置子页面里它会返回
+    // 当前可见 VC 本身），直接强转并访问 viewControllers 会触发
+    // "unrecognized selector viewControllers" 崩溃。这里做严格类型校验。
+    UIViewController *current = currentVC();
+    if (!current) return nil;
+
+    // 常见路径：当前 VC 是 LauncherPrefManageJREViewController 自身（在导航栈顶）
+    if ([current isKindOfClass:LauncherPrefManageJREViewController.class]) {
+        return (LauncherPrefManageJREViewController *)current;
+    }
+
+    // 走 splitVC 路径：先尝试从 current 往上找 splitVC
+    UISplitViewController *splitVC = nil;
+    if ([current isKindOfClass:UISplitViewController.class]) {
+        splitVC = (UISplitViewController *)current;
+    } else if ([current.navigationController isKindOfClass:LauncherNavigationController.class]) {
+        // current 的 navigationController 是 LauncherNavigationController
+        // LauncherNavigationController 的 presenting/splitViewController 才是 splitVC
+        splitVC = current.navigationController.splitViewController;
+    } else {
+        splitVC = current.splitViewController;
+    }
+    if (![splitVC isKindOfClass:UISplitViewController.class] || splitVC.viewControllers.count < 2) {
         return nil;
     }
-    return (id)nav.topViewController;
+    UIViewController *secondary = splitVC.viewControllers[1];
+    LauncherNavigationController *nav = nil;
+    if ([secondary isKindOfClass:LauncherNavigationController.class]) {
+        nav = (LauncherNavigationController *)secondary;
+    } else if ([secondary isKindOfClass:UINavigationController.class]) {
+        UIViewController *top = ((UINavigationController *)secondary).topViewController;
+        if ([top isKindOfClass:LauncherPrefManageJREViewController.class]) {
+            return (LauncherPrefManageJREViewController *)top;
+        }
+    }
+    if (!nav || ![nav.topViewController isKindOfClass:LauncherPrefManageJREViewController.class]) {
+        return nil;
+    }
+    return (LauncherPrefManageJREViewController *)nav.topViewController;
 }
 
 - (void)viewDidLoad
@@ -60,6 +94,18 @@ static WFWorkflowProgressView* currentProgressView;
 
     self.tableView = [[UITableView alloc] initWithFrame:CGRectZero style:UITableViewStyleInsetGrouped];
     self.tableView.keyboardDismissMode = UIScrollViewKeyboardDismissModeInteractive;
+
+    // 适配自定义启动器背景：透明化 tableView + 导航栏毛玻璃
+    if (self.navigationController) {
+        [[BackgroundManager sharedManager] applyEffectToNavigationBar:self.navigationController.navigationBar];
+    }
+    [[BackgroundManager sharedManager] makeViewControllerTransparent:self];
+    // 修复：使用 Automatic 让系统自动为半透明导航栏添加顶部 contentInset，
+    // 避免第一栏（"1.16及更早版本"）被导航栏覆盖。配合 edgesForExtendedLayout=All
+    // 保留导航栏毛玻璃穿透效果，内容起始位置自动下移到导航栏下方。
+    self.tableView.contentInsetAdjustmentBehavior = UIScrollViewContentInsetAdjustmentAutomatic;
+    self.extendedLayoutIncludesOpaqueBars = YES;
+    self.edgesForExtendedLayout = UIRectEdgeAll;
 
     self.javaRuntimes = @{
         @(DEFAULT_JRE): @[@"preference.manage_runtime.default.1165", @"preference.manage_runtime.default.117", @"launcher.menu.execute_jar"]
@@ -76,12 +122,55 @@ static WFWorkflowProgressView* currentProgressView;
 
     // Load WFWorkflowProgressView
     dlopen("/System/Library/PrivateFrameworks/WorkflowUIServices.framework/WorkflowUIServices", RTLD_GLOBAL);
+
+    // 监听背景效果变化通知：切换毛玻璃↔半透明或调整透明度时，
+    // 重新透明化当前 VC 并 reload cell，让每个 cell 重新应用 applyEffectToCell:
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(reapplyBackgroundEffect)
+                                                 name:@"BackgroundUIEffectChanged"
+                                               object:nil];
+}
+
+/// 背景效果变化时重新应用透明化处理，确保 cell 在切换毛玻璃↔半透明后视觉一致
+- (void)reapplyBackgroundEffect {
+    [[BackgroundManager sharedManager] makeViewControllerTransparent:self];
+    if (self.navigationController) {
+        [[BackgroundManager sharedManager] applyEffectToNavigationBar:self.navigationController.navigationBar];
+    }
+    [self.tableView reloadData];
+}
+
+- (void)dealloc {
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
 }
 
 + (void)actionCancelImportRuntime {
-    UISplitViewController *splitVC = (id)currentVC();
-    LauncherNavigationController *nav = (id)splitVC.viewControllers[1];
-    [nav.progressViewMain.observedProgress cancel];
+    // 修复 #41: 同 currentInstance 的类型校验问题，避免 currentVC() 不是 splitVC 时崩溃
+    LauncherPrefManageJREViewController *instance = [self currentInstance];
+    if (instance) {
+        LauncherNavigationController *nav = (LauncherNavigationController *)instance.navigationController;
+        if ([nav isKindOfClass:LauncherNavigationController.class] && nav.progressViewMain.observedProgress) {
+            [nav.progressViewMain.observedProgress cancel];
+        }
+        return;
+    }
+    // 兜底：尝试走 splitVC 路径
+    UIViewController *current = currentVC();
+    UISplitViewController *splitVC = nil;
+    if ([current isKindOfClass:UISplitViewController.class]) {
+        splitVC = (UISplitViewController *)current;
+    } else {
+        splitVC = current.splitViewController;
+    }
+    if ([splitVC isKindOfClass:UISplitViewController.class] && splitVC.viewControllers.count >= 2) {
+        UIViewController *secondary = splitVC.viewControllers[1];
+        if ([secondary isKindOfClass:LauncherNavigationController.class]) {
+            LauncherNavigationController *nav = (LauncherNavigationController *)secondary;
+            if (nav.progressViewMain.observedProgress) {
+                [nav.progressViewMain.observedProgress cancel];
+            }
+        }
+    }
 }
 
 - (void)actionImportRuntime {
@@ -159,6 +248,35 @@ static WFWorkflowProgressView* currentProgressView;
     }
 }
 
+/// section header：透明背景，与界面背景一致（可看到背景图）。
+- (UIView *)tableView:(UITableView *)tableView viewForHeaderInSection:(NSInteger)section {
+    NSString *title = [self tableView:tableView titleForHeaderInSection:section];
+    UITableViewHeaderFooterView *header = [tableView dequeueReusableHeaderFooterViewWithIdentifier:@"JRESectionHeader"];
+    if (!header) {
+        header = [[UITableViewHeaderFooterView alloc] initWithReuseIdentifier:@"JRESectionHeader"];
+    }
+    header.textLabel.text = title;
+    return header;
+}
+
+/// section header 透明化：不套毛玻璃，与界面背景融为一体。
+/// 有自定义背景时用白色文字 + 阴影保证可读性；无背景时用系统默认色。
+- (void)tableView:(UITableView *)tableView willDisplayHeaderView:(UIView *)view forSection:(NSInteger)section {
+    if (![view isKindOfClass:[UITableViewHeaderFooterView class]]) return;
+    UITableViewHeaderFooterView *header = (UITableViewHeaderFooterView *)view;
+
+    // 透明背景：不再使用毛玻璃，可看到背景图
+    header.backgroundView = nil;
+    if ([[BackgroundManager sharedManager] hasBackground]) {
+        header.textLabel.textColor = [UIColor whiteColor];
+        header.textLabel.shadowColor = [UIColor blackColor];
+        header.textLabel.shadowOffset = CGSizeMake(0, 1);
+    } else {
+        header.textLabel.textColor = [UIColor labelColor];
+        header.textLabel.shadowColor = nil;
+    }
+}
+
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
     switch (self.sortedJavaVersions[section].intValue) {
         case DEFAULT_JRE: return localize(@"preference.manage_runtime.footer.default", nil);
@@ -190,6 +308,8 @@ static WFWorkflowProgressView* currentProgressView;
     cell.textLabel.text = localize(self.javaRuntimes[@DEFAULT_JRE][indexPath.row], nil);
     cell.detailTextLabel.text = [NSString stringWithFormat:@"Java %@",
         ((NSDictionary *)self.selectedRuntimes[@"0"])[self.selectedRTTags[indexPath.row]]];
+    // 适配自定义启动器背景：cell 应用毛玻璃/半透明效果，避免默认 systemBackgroundColor 遮挡背景
+    [[BackgroundManager sharedManager] applyEffectToCell:cell];
     return cell;
 }
 
@@ -246,6 +366,10 @@ static WFWorkflowProgressView* currentProgressView;
         });
     });
 
+    // 适配自定义启动器背景：cell 应用毛玻璃/半透明效果，避免默认 systemBackgroundColor 遮挡背景
+    // 注意：applyEffectToCell: 只重置 backgroundView/backgroundColor/contentView.backgroundColor，
+    // 不影响 accessoryView（progressView）和 accessoryType（checkmark）
+    [[BackgroundManager sharedManager] applyEffectToCell:cell];
     return cell;
 }
 
@@ -287,22 +411,68 @@ static WFWorkflowProgressView* currentProgressView;
 
 - (void)tableView:(UITableView *)tableView openPickerAtIndexPath:(NSIndexPath *)indexPath minVersion:(NSInteger)minVer {
     UITableViewCell *cell = [tableView cellForRowAtIndexPath:indexPath];
-    //NSDictionary *item = self.prefContents[indexPath.section][indexPath.row];
 
-    NSMutableArray *menuItems = [NSMutableArray new];
+    // 收集可选的 Java 版本
+    NSMutableArray<NSString *> *versionTitles = [NSMutableArray new];
+    NSMutableArray<NSNumber *> *versionNumbers = [NSMutableArray new];
     for (int i = 1; i < self.sortedJavaVersions.count; i++) {
         if (self.sortedJavaVersions[i].intValue < minVer ||
             self.sortedJavaVersions[i].intValue == INVALID_JRE) {
             continue;
         }
         NSString *version = [self tableView:tableView titleForHeaderInSection:i];
+        [versionTitles addObject:version];
+        [versionNumbers addObject:self.sortedJavaVersions[i]];
+    }
+
+    // iPhone 上改用 UIAlertController actionSheet，避免紧凑菜单被压缩不可调整
+    if ([UIDevice currentDevice].userInterfaceIdiom == UIUserInterfaceIdiomPhone) {
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:cell.textLabel.text
+                                                                       message:nil
+                                                                preferredStyle:UIAlertControllerStyleActionSheet];
+        if (versionTitles.count == 0) {
+            [alert addAction:[UIAlertAction actionWithTitle:localize(@"None", nil)
+                                                       style:UIAlertActionStyleDefault
+                                                     handler:nil]];
+        } else {
+            for (int i = 0; i < versionTitles.count; i++) {
+                NSString *version = versionTitles[i];
+                NSNumber *verNum = versionNumbers[i];
+                // 当前选中项前加 ✓ 标记
+                NSString *title = version;
+                if ([cell.detailTextLabel.text isEqualToString:version]) {
+                    title = [NSString stringWithFormat:@"✓ %@", version];
+                }
+                [alert addAction:[UIAlertAction actionWithTitle:title
+                                                           style:UIAlertActionStyleDefault
+                                                         handler:^(UIAlertAction *a) {
+                    cell.detailTextLabel.text = version;
+                    ((NSMutableDictionary *)self.selectedRuntimes[@"0"])[self.selectedRTTags[indexPath.row]] = verNum.stringValue;
+                    setPrefObject(@"java.java_homes", self.selectedRuntimes);
+                }]];
+            }
+        }
+        [alert addAction:[UIAlertAction actionWithTitle:localize(@"Cancel", nil)
+                                                   style:UIAlertActionStyleCancel
+                                                 handler:nil]];
+        alert.popoverPresentationController.sourceView = cell;
+        alert.popoverPresentationController.sourceRect = cell.bounds;
+        [self presentViewController:alert animated:YES completion:nil];
+        return;
+    }
+
+    // iPad：保留 UIContextMenuInteraction 紧凑菜单
+    NSMutableArray *menuItems = [NSMutableArray new];
+    for (int i = 0; i < versionTitles.count; i++) {
+        NSString *version = versionTitles[i];
+        NSNumber *verNum = versionNumbers[i];
         [menuItems addObject:[UIAction
             actionWithTitle:version
             image:nil
             identifier:nil
             handler:^(UIAction *action) {
                 cell.detailTextLabel.text = version;
-                ((NSMutableDictionary *)self.selectedRuntimes[@"0"])[self.selectedRTTags[indexPath.row]] = self.sortedJavaVersions[i].stringValue;
+                ((NSMutableDictionary *)self.selectedRuntimes[@"0"])[self.selectedRTTags[indexPath.row]] = verNum.stringValue;
                 setPrefObject(@"java.java_homes", self.selectedRuntimes);
             }]];
     }
@@ -319,8 +489,10 @@ static WFWorkflowProgressView* currentProgressView;
 
     self.currentMenu = [UIMenu menuWithTitle:cell.textLabel.text children:menuItems];
     UIContextMenuInteraction *interaction = [[UIContextMenuInteraction alloc] initWithDelegate:self];
-    [cell.detailTextLabel addInteraction:interaction];
-    [interaction _presentMenuAtLocation:CGPointZero];
+    [cell addInteraction:interaction];
+    CGRect detailFrame = cell.detailTextLabel.frame;
+    CGPoint location = CGPointMake(CGRectGetMidX(detailFrame), CGRectGetMidY(detailFrame));
+    [interaction _presentMenuAtLocation:location];
 }
 
 - (UIContextMenuConfiguration *)contextMenuInteraction:(UIContextMenuInteraction *)interaction configurationForMenuAtLocation:(CGPoint)location

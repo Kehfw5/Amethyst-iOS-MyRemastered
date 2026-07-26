@@ -1,4 +1,5 @@
 #import "PLLogOutputView.h"
+#import "PLCrashView.h"
 #import "SurfaceViewController.h"
 #import "utils.h"
 
@@ -139,10 +140,25 @@ static PLLogOutputView* current;
     }];
 }
 
+/// 返回启动器主界面
+- (void)dismissAndReturnToLauncher {
+    if (fatalErrorOccurred && fatalExitGroup != nil) {
+        [UIApplication.sharedApplication performSelector:@selector(suspend)];
+        dispatch_group_leave(fatalExitGroup);
+    }
+}
+
 + (void)_appendToLog:(NSString *)line {
     if (line.length == 0) {
         return;
     }
+
+    // 通知 LanPortDetector 处理此日志行
+    // LanPortDetector 会检测 MC "对局域网开放"日志中的端口号
+    // 此通知是轻量的，即使 LanPortDetector 未启动也无副作用
+    [[NSNotificationCenter defaultCenter] postNotificationName:@"PLLogOutputLineNotification"
+                                                        object:nil
+                                                      userInfo:@{@"line": line}];
 
     NSIndexPath *indexPath = [NSIndexPath indexPathForRow:logLines.count inSection:0];
     [logLines addObject:line];
@@ -169,8 +185,23 @@ static PLLogOutputView* current;
     });
 }
 
+<<<<<<< HEAD
 + (BOOL)handleExitCode:(int)code {
     if (!current) return NO;
+=======
++ (void)handleExitCode:(int)code {
+    if (!current) return;
+    
+    // 如果有错误，显示新的崩溃界面
+    if (code != 0) {
+        fatalErrorOccurred = YES;
+        canAppendToLog = NO;
+        [PLCrashView showWithExitCode:code];
+        return;
+    }
+    
+    // 退出代码为0时的降级处理（正常退出）
+>>>>>>> author-fork/main
     dispatch_async(dispatch_get_main_queue(), ^(void){
         if (current.navController.view.hidden) {
             [current actionToggleLogOutput];

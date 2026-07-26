@@ -171,14 +171,12 @@ der Minecraft-Version zu wählen. Verringerte Auflösung reduziert die Arbeitsla
 "preference.title.renderer.debug.auto" = "Auto: gl4es or ANGLE";
 "preference.title.renderer.debug.gl4es" = "gl4es 1.1.4 - gibt OpenGL 2.1 aus";
 "preference.title.renderer.debug.angle" = "ANGLE (1.17+) - gibt OpenGL 3.2 (Kernprofil, begrenzt) aus";
-"preference.title.renderer.debug.zink" = "Zink (Mesa 21.0) - gibt OpenGL 4.1 aus";
+"preference.title.renderer.debug.zink" = "Zink (Mesa 25.0.7) - gibt OpenGL 4.1 aus";
 
 "preference.detail.renderer" = "Ändern Sie die OpenGL-Rendering-Engine";
 
 "preference.title.resolution" = "Auflösung (%)";
 "preference.detail.resolution" = "Ermöglicht es dir die Spielauflösung zu verringern.";
-"preference.title.max_framerate" = "Maximale Framerate";
-"preference.detail.max_framerate" = "Erlaubt es dir, die Framerate auf 60FPS auf ProMotion-Displays zu beschränken.";
 
 "preference.title.fullscreen_airplay" = "Vollbild-AirPlay";
 "preference.detail.fullscreen_airplay" = "Ermöglicht es dir nur das Spielfenster auf ein externes Display zu spiegeln, anstatt den ganzen Bildschirm zu spiegeln.";

@@ -7,6 +7,7 @@
 #import "LauncherNavigationController.h"
 #import "LauncherPreferences.h"
 #import "LauncherPrefContCfgViewController.h"
+#import "BackgroundManager.h"
 #import "PickTextField.h"
 #import "ios_uikit_bridge.h"
 #import "utils.h"
@@ -22,6 +23,7 @@ typedef void(^CreateView)(UITableViewCell *, NSString *, NSDictionary *);
 @property(nonatomic) NSMutableDictionary *currentMappings;
 @property(nonatomic) NSDictionary *keycodePlist;
 @property(nonatomic) UIPickerView *editPickMapping;
+@property(nonatomic) UIToolbar *editPickToolbar;
 @property(nonatomic) UITextField *activeTextField;
 @property(nonatomic) NSArray<NSString*>* prefSections;
 @property(nonatomic) NSMutableArray<NSNumber*>* prefSectionsVisibility;
@@ -58,6 +60,32 @@ typedef void(^CreateView)(UITableViewCell *, NSString *, NSDictionary *);
     self.editPickMapping = [[UIPickerView alloc] init];
     self.editPickMapping.delegate = self;
     self.editPickMapping.dataSource = self;
+    self.editPickToolbar = [[UIToolbar alloc] initWithFrame:CGRectMake(0.0, 0.0, self.view.frame.size.width, 44.0)];
+    UIBarButtonItem *btnFlexibleSpace = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemFlexibleSpace target:self action:nil];
+    UIBarButtonItem *editDoneButton = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone target:self action:@selector(closeTextField:)];
+    self.editPickToolbar.items = @[btnFlexibleSpace, editDoneButton];
+
+    // 适配自定义启动器背景：将当前视图控制器透明化，让全局背景（图片/视频）能够透出显示。
+    // 放在 tableView 重新创建之后调用，确保 makeViewControllerTransparent 处理的是最终的 tableView。
+    [[BackgroundManager sharedManager] makeViewControllerTransparent:self];
+
+    // 监听背景 UI 效果变化通知：当用户在背景设置中切换毛玻璃/半透明或调整透明度时，
+    // 重新调用 makeViewControllerTransparent 以应用最新的视觉效果，保证背景始终正确透出。
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(reapplyBackgroundEffect)
+                                                 name:@"BackgroundUIEffectChanged"
+                                               object:nil];
+}
+
+/// 重新应用背景效果：当 BackgroundUIEffectChanged 通知到达时调用，
+/// 通过 BackgroundManager 重新设置当前视图控制器的透明度/毛玻璃效果，
+/// 确保 tableView 背景透明、全局背景能够正常透出。
+- (void)reapplyBackgroundEffect {
+    [[BackgroundManager sharedManager] makeViewControllerTransparent:self];
+}
+
+- (void)dealloc {
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
 }
 
 - (void)loadGamepadConfigurationFile {
@@ -118,7 +146,7 @@ typedef void(^CreateView)(UITableViewCell *, NSString *, NSDictionary *);
     } else if(indexPath.section == 1 || indexPath.section == 2) {
         NSNumber *keycode = (NSNumber *)item[@"keycode"];
         cell.textLabel.text = localize(([NSString stringWithFormat:@"controller_configurator.%@.title.%@", getPrefObject(@"control.controller_type"), item[@"name"]]), nil);
-        PickTextField *view = (id)cell.accessoryView;
+        UITextField *view = (id)cell.accessoryView;
         if (view == nil) {
             view = [[PickTextField alloc] initWithFrame:CGRectMake(0, 0, cell.bounds.size.width / 2.1, cell.bounds.size.height)];
             [view addTarget:view action:@selector(resignFirstResponder) forControlEvents:UIControlEventEditingDidEndOnExit];
@@ -131,8 +159,8 @@ typedef void(^CreateView)(UITableViewCell *, NSString *, NSDictionary *);
             view.textAlignment = NSTextAlignmentRight;
             view.tintColor = UIColor.clearColor;
             view.adjustsFontSizeToFitWidth = YES;
+            view.inputAccessoryView = self.editPickToolbar;
             view.inputView = self.editPickMapping;
-            [view setupDoneButtonWithTarget:self action:@selector(closeTextField:)];
             cell.accessoryView = view;
         }
         view.text = self.keyCodeMap[[self.keyValueMap indexOfObject:keycode]];

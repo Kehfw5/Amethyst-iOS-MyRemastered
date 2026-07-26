@@ -28,11 +28,14 @@ public class UIKit {
 
     public static void callback_JavaGUIViewController_launchJarFile(final String filepath, String[] args) throws Throwable {
         // Launch the JAR file
-        String mainClassName = null;
-
-        JarFile jarfile = new JarFile(filepath);
-        String mainClass = jarfile.getManifest().getMainAttributes().getValue("Main-Class");
-        jarfile.close();
+        // 用 try-with-resources 确保 JarFile 关闭，避免文件描述符泄漏
+        String mainClass;
+        try (JarFile jarfile = new JarFile(filepath)) {
+            if (jarfile.getManifest() == null) {
+                throw new IllegalArgumentException("no manifest in \"" + filepath + "\"");
+            }
+            mainClass = jarfile.getManifest().getMainAttributes().getValue("Main-Class");
+        }
         if (mainClass == null) {
             throw new IllegalArgumentException("no main manifest attribute, in \"" + filepath + "\"");
         }
@@ -40,9 +43,22 @@ public class UIKit {
         // LabyMod Installer uses FlatLAF which has some macOS-specific codes, so we make it think it's running on Linux.
         patch_FlatLAF_setLinux();
 
-        Class<?> clazz = ClassLoader.getSystemClassLoader().loadClass(mainClass);
+        // 用 URLClassLoader 加载 JAR，支持 JarInJar（Forge/NeoForge 部分版本 installer 内嵌 JAR 依赖）
+        // 父 ClassLoader 为系统 ClassLoader，确保 PojavLauncher/UIKit bridge 类仍可加载
+        java.net.URL[] urls = new java.net.URL[]{new java.io.File(filepath).toURI().toURL()};
+        ClassLoader loader = new java.net.URLClassLoader(urls, ClassLoader.getSystemClassLoader());
+        Class<?> clazz = loader.loadClass(mainClass);
         Method method = clazz.getMethod("main", String[].class);
-        method.invoke(null, new Object[]{args});
+        try {
+            method.invoke(null, new Object[]{args});
+        } catch (java.lang.reflect.InvocationTargetException ite) {
+            // 解包 InvocationTargetException，暴露 installer main 方法的真实异常
+            Throwable cause = ite.getCause();
+            if (cause != null) {
+                throw cause;
+            }
+            throw ite;
+        }
     }
 
     static {
@@ -53,4 +69,29 @@ public class UIKit {
     // public static native void runOnUIThread(UIKitCallback callback);
 
     public static native void showError(String title, String message, boolean exitIfOk);
+<<<<<<< HEAD
+=======
+
+    private static native void updateMCGuiScale(int scale);
+
+    // ============================================================================
+    // SDL3 UIKit 窗口创建桥接（MC 26.3-snapshot-4+ 使用 SDL3 替代 GLFW）
+    // ============================================================================
+    // 由 SDLVideo.java 覆盖类的 SDL_CreateWindow 方法调用。
+    // 在 native 代码中完成 SDL3 Properties API 调用，把启动器的 UIWindowScene
+    // 指针传给 SDL3，让它复用启动器的窗口场景而非创建新的（避免阻塞/冲突）。
+    //
+    // 详见 egl_bridge.m 中 Java_net_kdt_pojavlaunch_uikit_UIKit_sdlCreateWindowWithScene
+    // 的实现说明。
+
+    /**
+     * 创建 SDL3 窗口，复用启动器的 UIWindowScene。
+     *
+     * @param w 窗口宽度
+     * @param h 窗口高度
+     * @param flags 窗口 flags（native 会自动添加 SDL_WINDOW_METAL）
+     * @return SDL_Window 指针（成功）或 0（失败）
+     */
+    public static native long sdlCreateWindowWithScene(int w, int h, long flags);
+>>>>>>> author-fork/main
 } 

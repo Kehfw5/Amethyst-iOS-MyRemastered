@@ -6,14 +6,20 @@
 #import "LauncherMenuViewController.h"
 #import "LauncherPreferences.h"
 #import "PLPrefTableViewController.h"
+#import "BackgroundManager.h"
 #import "UIKit+hook.h"
 
 #import "ios_uikit_bridge.h"
 #import "utils.h"
 
-@interface PLPrefTableViewController()<UIContextMenuInteractionDelegate>{}
+@interface PLPrefTableViewController()<UIContextMenuInteractionDelegate>{
+    NSString *_currentSearchText;
+}
 @property(nonatomic) UIMenu* currentMenu;
 @property(nonatomic) UIBarButtonItem *helpBtn;
+@property(nonatomic, strong) UISearchController *searchController;
+/// 搜索结果：filteredSections[0] 为扁平化的所有匹配项（忽略 section 归属）
+@property(nonatomic, strong) NSArray<NSDictionary *> *filteredItems;
 
 @end
 
@@ -40,6 +46,79 @@
         // Display one singe section if prefSection is unspecified
         self.prefSectionsVisibility = (id)@[@YES];
     }
+
+    // 搜索栏初始化（仅当 searchEnabled=YES 时启用，子类负责设置）
+    if (self.searchEnabled) {
+        self.searchController = [[UISearchController alloc] initWithSearchResultsController:nil];
+        self.searchController.searchResultsUpdater = self;
+        self.searchController.obscuresBackgroundDuringPresentation = NO;
+        self.searchController.searchBar.placeholder = @"搜索设置项...";
+        self.searchController.searchBar.autocapitalizationType = UITextAutocapitalizationTypeNone;
+        self.searchController.searchBar.autocorrectionType = UITextAutocorrectionTypeNo;
+        self.tableView.tableHeaderView = self.searchController.searchBar;
+        self.definesPresentationContext = YES;
+        _currentSearchText = @"";
+    }
+
+    // 适配自定义启动器背景：将当前视图控制器透明化，让全局背景（图片/视频）能够透出显示。
+    // 放在 tableView 重新创建之后调用，确保 makeViewControllerTransparent 处理的是最终的 tableView。
+    [[BackgroundManager sharedManager] makeViewControllerTransparent:self];
+
+    // 监听背景 UI 效果变化通知：当用户在背景设置中切换毛玻璃/半透明或调整透明度时，
+    // 重新调用 makeViewControllerTransparent 以应用最新的视觉效果，保证背景始终正确透出。
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(reapplyBackgroundEffect)
+                                                 name:@"BackgroundUIEffectChanged"
+                                               object:nil];
+}
+
+- (NSString *)currentSearchText {
+    return _currentSearchText ?: @"";
+}
+
+#pragma mark - Search
+
+- (void)updateSearchResultsForSearchController:(UISearchController *)searchController {
+    NSString *query = [searchController.searchBar.text stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    _currentSearchText = query ?: @"";
+
+    if (query.length == 0) {
+        self.filteredItems = nil;
+        [self.tableView reloadData];
+        return;
+    }
+
+    // 扁平化所有 prefContents 中的设置项，按 title/key/icon/localizedTitle 模糊匹配
+    NSMutableArray *results = [NSMutableArray array];
+    NSString *lowerQuery = query.lowercaseString;
+    for (int s = 0; s < self.prefContents.count; s++) {
+        NSArray *section = self.prefContents[s];
+        // 第 0 项是 section 头，跳过
+        for (int r = (self.prefSections ? 1 : 0); r < section.count; r++) {
+            NSDictionary *item = section[r];
+            NSString *title = item[@"title"];
+            if (!title) {
+                title = [NSString stringWithFormat:@"preference.title.%@", item[@"key"]];
+            }
+            NSString *localizedTitle = localize(title, nil);
+            NSString *key = item[@"key"] ?: @"";
+            NSString *icon = item[@"icon"] ?: @"";
+            // 匹配本地化标题、key、icon 名、原文标题
+            if ([localizedTitle.lowercaseString containsString:lowerQuery] ||
+                [key.lowercaseString containsString:lowerQuery] ||
+                [icon.lowercaseString containsString:lowerQuery] ||
+                [title.lowercaseString containsString:lowerQuery]) {
+                // 记录原始 section 和 row，便于点击时定位
+                NSMutableDictionary *matched = [item mutableCopy];
+                matched[@"__origSection"] = @(s);
+                matched[@"__origRow"] = @(r);
+                matched[@"__localizedTitle"] = localizedTitle;
+                [results addObject:matched];
+            }
+        }
+    }
+    self.filteredItems = results;
+    [self.tableView reloadData];
 }
 
 - (UIBarButtonItem *)drawHelpButton {
@@ -54,7 +133,7 @@
 
     // Put navigation buttons back in place if we're first of the navigation controller
     if (self.hasDetail && self.navigationController) {
-        self.navigationItem.rightBarButtonItems = @[[sidebarViewController drawAccountButton], [self drawHelpButton]];
+        self.navigationItem.rightBarButtonItems = @[[self drawHelpButton]];
     }
 
     // Scan for child pane cells and reload them
@@ -81,10 +160,16 @@
 }
 
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView {
+    // 搜索结果为单一扁平 section
+    if (self.filteredItems) return 1;
     return self.prefSectionsVisibility.count;
 }
 
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
+    // 搜索结果模式
+    if (self.filteredItems) {
+        return self.filteredItems.count;
+    }
     if (self.prefSectionsVisibility[section].boolValue) {
         return self.prefContents[section].count;
     }
@@ -92,6 +177,33 @@
 }
 
 - (UITableViewCell *)tableView:(nonnull UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
+    // 搜索结果模式：使用扁平化的 filteredItems
+    if (self.filteredItems) {
+        NSDictionary *item = self.filteredItems[indexPath.row];
+        NSString *cellID = @"searchResultCell";
+        UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:cellID];
+        if (cell == nil) {
+            cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:cellID];
+            cell.textLabel.adjustsFontSizeToFitWidth = YES;
+            cell.textLabel.numberOfLines = 0;
+            cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+            cell.selectionStyle = UITableViewCellSelectionStyleDefault;
+        }
+        cell.textLabel.text = item[@"__localizedTitle"];
+        // 副标题显示所属 section
+        NSNumber *origSection = item[@"__origSection"];
+        if (origSection && self.prefSections && origSection.intValue < (int)self.prefSections.count) {
+            NSString *sectionKey = self.prefSections[origSection.intValue];
+            cell.detailTextLabel.text = localize(([NSString stringWithFormat:@"preference.section.%@", sectionKey]), nil);
+        } else {
+            cell.detailTextLabel.text = nil;
+        }
+        cell.imageView.image = [UIImage systemImageNamed:item[@"icon"]];
+        cell.imageView.tintColor = [item[@"destructive"] boolValue] ? UIColor.systemRedColor : nil;
+        cell.userInteractionEnabled = YES;
+        return cell;
+    }
+
     NSDictionary *item = self.prefContents[indexPath.section][indexPath.row];
 
     NSString *cellID;
@@ -304,6 +416,36 @@
 
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
     [tableView deselectRowAtIndexPath:indexPath animated:NO];
+
+    // 搜索结果模式：跳转到原始 section 并展开该 section
+    if (self.filteredItems) {
+        NSDictionary *item = self.filteredItems[indexPath.row];
+        NSNumber *origSection = item[@"__origSection"];
+        NSNumber *origRow = item[@"__origRow"];
+        if (!origSection || !origRow) return;
+
+        // 关闭搜索并恢复原始布局
+        // 注意：UISearchController 没有 setActive:animated:，用 active 属性替代
+        self.searchController.active = NO;
+        self.filteredItems = nil;
+        _currentSearchText = @"";
+
+        // 展开对应 section
+        if (origSection.intValue < (int)self.prefSectionsVisibility.count) {
+            self.prefSectionsVisibility[origSection.intValue] = @YES;
+        }
+        [self.tableView reloadData];
+
+        // 跳转到该项并触发原始点击行为
+        NSIndexPath *origIndexPath = [NSIndexPath indexPathForRow:origRow.intValue inSection:origSection.intValue];
+        [self.tableView scrollToRowAtIndexPath:origIndexPath atScrollPosition:UITableViewScrollPositionMiddle animated:YES];
+        // 延迟触发，等滚动完成
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [self tableView:tableView didSelectRowAtIndexPath:origIndexPath];
+        });
+        return;
+    }
+
     if (indexPath.row == 0 && self.prefSections) {
         self.prefSectionsVisibility[indexPath.section] = @(![self.prefSectionsVisibility[indexPath.section] boolValue]);
         [tableView reloadSections:[NSIndexSet indexSetWithIndex:indexPath.section] withRowAnimation:UITableViewRowAnimationFade];
@@ -374,6 +516,48 @@
 
     NSArray *pickKeys = item[@"pickKeys"];
     NSArray *pickList = item[@"pickList"];
+
+    // 修复 iPhone 上选项弹出菜单被过度压缩不可调整的问题。
+    // 根因：UIContextMenuInteraction 紧凑菜单（preferredLayout=3）锚点取自窄小的
+    // cell.detailTextLabel.frame，在 iPhone 窄屏上把多个中文选项挤压到很小的浮动气泡内。
+    // 修复：iPhone 上改用 UIAlertController actionSheet，提供标准尺寸的全宽选择器，
+    // 每个选项有足够空间可正常点击。iPad 上保留 UIContextMenuInteraction 紧凑菜单
+    // （锚点 popover 在大屏上更自然）。
+    if ([UIDevice currentDevice].userInterfaceIdiom == UIUserInterfaceIdiomPhone) {
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:message
+                                                                       message:nil
+                                                                preferredStyle:UIAlertControllerStyleActionSheet];
+        for (int i = 0; i < pickList.count; i++) {
+            NSString *title = pickList[i];
+            NSString *value = pickKeys[i];
+            // 在标题前加 ✓ 标记当前选中项，让用户能直观看到当前值
+            if ([cell.detailTextLabel.text isEqualToString:value]) {
+                title = [NSString stringWithFormat:@"✓ %@", title];
+            }
+            UIAlertAction *action = [UIAlertAction actionWithTitle:title
+                                                              style:UIAlertActionStyleDefault
+                                                            handler:^(UIAlertAction *a) {
+                cell.detailTextLabel.text = value;
+                self.setPreference(self.prefSections[indexPath.section], item[@"key"], value);
+                void(^invokeAction)(NSString *) = item[@"action"];
+                if (invokeAction) {
+                    invokeAction(value);
+                }
+            }];
+            [alert addAction:action];
+        }
+        [alert addAction:[UIAlertAction actionWithTitle:localize(@"Cancel", nil)
+                                                   style:UIAlertActionStyleCancel
+                                                 handler:nil]];
+        // 配置 popoverPresentationController，防御性处理（iPhone 上 actionSheet 从底部弹出，
+        // popoverPresentationController 不会生效，但设置 sourceView 避免 iPad 分屏时崩溃）
+        alert.popoverPresentationController.sourceView = cell;
+        alert.popoverPresentationController.sourceRect = cell.bounds;
+        [self presentViewController:alert animated:YES completion:nil];
+        return;
+    }
+
+    // iPad：保留 UIContextMenuInteraction 紧凑菜单
     NSMutableArray<UIAction *> *menuItems = [[NSMutableArray alloc] init];
     for (int i = 0; i < pickList.count; i++) {
         [menuItems addObject:[UIAction
@@ -394,8 +578,11 @@
 
     self.currentMenu = [UIMenu menuWithTitle:message children:menuItems];
     UIContextMenuInteraction *interaction = [[UIContextMenuInteraction alloc] initWithDelegate:self];
-    cell.detailTextLabel.interactions = @[interaction];
-    [interaction _presentMenuAtLocation:CGPointZero];
+    // 挂载到 cell 本身而不是 detailTextLabel，避免 detailTextLabel 尚未进入 window 时触发 UITargetedPreview 断言崩溃
+    [cell addInteraction:interaction];
+    CGRect detailFrame = cell.detailTextLabel.frame;
+    CGPoint location = CGPointMake(CGRectGetMidX(detailFrame), CGRectGetMidY(detailFrame));
+    [interaction _presentMenuAtLocation:location];
 }
 
 - (void)tableView:(UITableView *)tableView invokeActionWithPromptAtIndexPath:(NSIndexPath *)indexPath {
@@ -447,6 +634,17 @@
     NSString *key = objc_getAssociatedObject(sender, @"key");
 
     self.setPreference(section, key, sender.text);
+}
+
+/// 重新应用背景效果：当 BackgroundUIEffectChanged 通知到达时调用，
+/// 通过 BackgroundManager 重新设置当前视图控制器的透明度/毛玻璃效果，
+/// 确保 tableView 背景透明、全局背景能够正常透出。
+- (void)reapplyBackgroundEffect {
+    [[BackgroundManager sharedManager] makeViewControllerTransparent:self];
+}
+
+- (void)dealloc {
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
 }
 
 @end

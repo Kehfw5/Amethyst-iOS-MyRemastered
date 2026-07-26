@@ -4,6 +4,9 @@
 #import "ALTServerConnection.h"
 #import "CustomControlsViewController.h"
 #import "DownloadProgressViewController.h"
+#import "DownloadTasksViewController.h"
+#import "DownloadTaskManager.h"
+#import "DownloadTaskItem.h"
 #import "JavaGUIViewController.h"
 #import "LauncherMenuViewController.h"
 #import "LauncherNavigationController.h"
@@ -19,7 +22,6 @@
 #import "utils.h"
 #import "installer/modpack/ModrinthAPI.h"
 
-#import <objc/runtime.h>
 #include <sys/time.h>
 
 #define AUTORESIZE_MASKS UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleLeftMargin | UIViewAutoresizingFlexibleRightMargin
@@ -30,12 +32,21 @@ static void *ProgressObserverContext = &ProgressObserverContext;
 }
 
 @property(nonatomic) MinecraftResourceDownloadTask* task;
-@property(nonatomic) UINavigationController* progressVC;
-@property(nonatomic) NSArray* globalToolbarItems;
+@property(nonatomic) DownloadProgressViewController* progressVC;
 @property(nonatomic) PLPickerView* versionPickerView;
-@property(nonatomic) PickTextField* versionTextField;
-@property(nonatomic) UIBarButtonItem* buttonInstallItem;
+@property(nonatomic) UITextField* versionTextField;
 @property(nonatomic) int profileSelectedAt;
+
+// ===== 下载中心入口（参照 FCL/ZL2/HMCL 下载进度弹窗入口）=====
+// 在工具栏上添加"下载中心"按钮，点击后弹出 DownloadTasksViewController，
+// 集中显示所有下载任务的进度（MC本体/模组/光影/资源包/数据包/世界存档/整合包）。
+// 所有通过 DownloadTaskManager 注册的下载任务都统一由这个弹窗显示进度。
+@property(nonatomic, strong) UIButton *downloadCenterButton;
+@property(nonatomic, strong) UIActivityIndicatorView *downloadCenterActivityIndicator;
+@property(nonatomic, strong) UILabel *downloadCenterProgressLabel;
+@property(nonatomic, weak) DownloadTasksViewController *presentedDownloadCenterVC;
+// 标记用户是否手动关闭了下载中心（避免下载任务更新时反复自动弹出）
+@property(nonatomic, assign) BOOL userDismissedDownloadCenter;
 
 @end
 
@@ -48,16 +59,8 @@ static void *ProgressObserverContext = &ProgressObserverContext;
     if ([self respondsToSelector:@selector(setNeedsUpdateOfScreenEdgesDeferringSystemGestures)]) {
         [self setNeedsUpdateOfScreenEdgesDeferringSystemGestures];
     }
-    UIToolbar *targetToolbar = self.toolbar;
-    BOOL hasLiquidGlass = _UISolariumEnabled && _UISolariumEnabled();
-    
-    if(hasLiquidGlass) {
-        self.versionTextField = [[PickTextField alloc] initWithFrame:CGRectMake(0, 0, MIN(self.view.frame.size.width,self.view.frame.size.height)*0.8 - 40, 36)];
-        self.progressViewMain = [[UIProgressView alloc] initWithFrame:CGRectMake(20, -5, self.versionTextField.frame.size.width-40, 0)];
-    } else {
-        self.versionTextField = [[PickTextField alloc] initWithFrame:CGRectMake(4, 4, self.toolbar.frame.size.width * 0.8 - 8, self.toolbar.frame.size.height - 8)];
-        self.progressViewMain = [[UIProgressView alloc] initWithFrame:CGRectMake(0, 0, targetToolbar.frame.size.width, 0)];
-    }
+
+    self.versionTextField = [[PickTextField alloc] initWithFrame:CGRectMake(4, 4, self.toolbar.frame.size.width * 0.8 - 8, self.toolbar.frame.size.height - 8)];
     [self.versionTextField addTarget:self.versionTextField action:@selector(resignFirstResponder) forControlEvents:UIControlEventEditingDidEndOnExit];
     self.versionTextField.autoresizingMask = AUTORESIZE_MASKS;
     self.versionTextField.placeholder = @"Specify version...";
@@ -71,66 +74,114 @@ static void *ProgressObserverContext = &ProgressObserverContext;
     self.versionPickerView = [[PLPickerView alloc] init];
     self.versionPickerView.delegate = self;
     self.versionPickerView.dataSource = self;
+    UIToolbar *versionPickToolbar = [[UIToolbar alloc] initWithFrame:CGRectMake(0.0, 0.0, self.view.frame.size.width, 44.0)];
 
     [self reloadProfileList];
 
-    self.versionTextField.inputView = self.versionPickerView;
-    [self.versionTextField setupDoneButtonWithTarget:self action:@selector(versionClosePicker)];
+    // 监听配置文件列表刷新通知
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(reloadProfileList)
+                                                 name:@"ReloadProfileList"
+                                               object:nil];
 
-    UIView *textFieldContainer = nil;
-    if(hasLiquidGlass) {
-        textFieldContainer = [[UIView alloc] initWithFrame:self.versionTextField.frame];
-        [textFieldContainer addSubview:self.progressViewMain];
-        self.buttonInstallItem = [[UIBarButtonItem alloc] initWithTitle:localize(@"Play", nil)
-                                                                  style:UIBarButtonItemStylePlain
-                                                                 target:self
-                                                                 action:@selector(performInstallOrShowDetails:)];
-        self.buttonInstallItem.enabled = NO;
-        dispatch_async(dispatch_get_main_queue(), ^{
-            self.buttonInstallItem.buttonGlassView.backgroundColor = [UIColor colorWithRed:121/255.0 green:56/255.0 blue:162/255.0 alpha:0.5];
-        });
-        [textFieldContainer addSubview:self.versionTextField];
-        UIBarButtonItem *textFieldItem = [[UIBarButtonItem alloc] initWithCustomView:textFieldContainer];
-        self.globalToolbarItems = @[
-            textFieldItem,
-            self.buttonInstallItem,
-        ];
-    } else {
-        self.buttonInstall = [UIButton buttonWithType:UIButtonTypeSystem];
-        setButtonPointerInteraction(self.buttonInstall);
-        [self.buttonInstall setTitle:localize(@"Play", nil) forState:UIControlStateNormal];
-        self.buttonInstall.autoresizingMask = AUTORESIZE_MASKS;
-        self.buttonInstall.backgroundColor = [UIColor colorWithRed:121/255.0 green:56/255.0 blue:162/255.0 alpha:1.0];
-        self.buttonInstall.layer.cornerRadius = 5;
-        self.buttonInstall.frame = CGRectMake(self.toolbar.frame.size.width * 0.8, 4, self.toolbar.frame.size.width * 0.2, self.toolbar.frame.size.height - 8);
-        self.buttonInstall.tintColor = UIColor.whiteColor;
-        self.buttonInstall.enabled = NO;
-        [self.buttonInstall addTarget:self action:@selector(performInstallOrShowDetails:) forControlEvents:UIControlEventPrimaryActionTriggered];
-        [targetToolbar addSubview:self.progressViewMain];
-        [targetToolbar addSubview:self.versionTextField];
-        [targetToolbar addSubview:self.buttonInstall];
-    }
-    
+    UIBarButtonItem *versionFlexibleSpace = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemFlexibleSpace target:self action:nil];
+    UIBarButtonItem *versionDoneButton = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone target:self action:@selector(versionClosePicker)];
+    versionPickToolbar.items = @[versionFlexibleSpace, versionDoneButton];
+    self.versionTextField.inputAccessoryView = versionPickToolbar;
+    self.versionTextField.inputView = self.versionPickerView;
+
+    UIView *targetToolbar = self.toolbar;
+    [targetToolbar addSubview:self.versionTextField];
+
+    self.progressViewMain = [[UIProgressView alloc] initWithFrame:CGRectMake(0, 0, self.toolbar.frame.size.width, 4)];
     self.progressViewMain.autoresizingMask = AUTORESIZE_MASKS;
     self.progressViewMain.hidden = YES;
+    [targetToolbar addSubview:self.progressViewMain];
+
+    self.buttonInstall = [UIButton buttonWithType:UIButtonTypeSystem];
+    setButtonPointerInteraction(self.buttonInstall);
+    [self.buttonInstall setTitle:localize(@"Play", nil) forState:UIControlStateNormal];
+    self.buttonInstall.autoresizingMask = AUTORESIZE_MASKS;
+    self.buttonInstall.backgroundColor = [UIColor colorWithRed:121/255.0 green:56/255.0 blue:162/255.0 alpha:1.0];
+    self.buttonInstall.layer.cornerRadius = 5;
+    self.buttonInstall.frame = CGRectMake(self.toolbar.frame.size.width * 0.8, 4, self.toolbar.frame.size.width * 0.2, self.toolbar.frame.size.height - 8);
+    self.buttonInstall.tintColor = UIColor.whiteColor;
+    self.buttonInstall.enabled = NO;
+    [self.buttonInstall addTarget:self action:@selector(performInstallOrShowDetails:) forControlEvents:UIControlEventPrimaryActionTriggered];
+    [targetToolbar addSubview:self.buttonInstall];
+
     self.progressText = [[UILabel alloc] initWithFrame:self.versionTextField.frame];
     self.progressText.adjustsFontSizeToFitWidth = YES;
     self.progressText.autoresizingMask = AUTORESIZE_MASKS;
     self.progressText.font = [self.progressText.font fontWithSize:16];
     self.progressText.textAlignment = NSTextAlignmentCenter;
     self.progressText.userInteractionEnabled = NO;
-    
-    if(hasLiquidGlass) {
-        [textFieldContainer addSubview:self.progressText];
-    } else {
-        [targetToolbar addSubview:self.progressText];
-    }
+    [targetToolbar addSubview:self.progressText];
+
+    // ===== 下载中心入口按钮（参照 FCL/ZL2/HMCL 下载进度弹窗入口）=====
+    // 在工具栏左侧添加一个"下载中心"按钮，当有下载任务时显示，
+    // 点击弹出 DownloadTasksViewController（FormSheet 方式），集中显示所有下载任务进度。
+    // 按钮布局：[图标] [进度百分比] [活动指示器]
+    CGFloat dcBtnWidth = 72.0;
+    CGFloat dcBtnHeight = self.toolbar.frame.size.height - 8;
+    self.downloadCenterButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    // 不使用按钮的 title 显示文字，改用独立的 progressLabel 避免与图标布局冲突
+    self.downloadCenterButton.tintColor = [UIColor whiteColor];
+    self.downloadCenterButton.backgroundColor = [UIColor colorWithRed:121/255.0 green:56/255.0 blue:162/255.0 alpha:0.85];
+    self.downloadCenterButton.layer.cornerRadius = 5;
+    self.downloadCenterButton.frame = CGRectMake(4, 4, dcBtnWidth, dcBtnHeight);
+    self.downloadCenterButton.autoresizingMask = UIViewAutoresizingFlexibleRightMargin;
+    [self.downloadCenterButton setImage:[UIImage systemImageNamed:@"arrow.down.circle"] forState:UIControlStateNormal];
+    // 图标固定在按钮左侧
+    CGFloat iconSize = 22.0;
+    [self.downloadCenterButton setImageEdgeInsets:UIEdgeInsetsMake(0, 4, 0, dcBtnWidth - iconSize - 4)];
+    [self.downloadCenterButton addTarget:self action:@selector(openDownloadCenter) forControlEvents:UIControlEventTouchUpInside];
+    self.downloadCenterButton.hidden = YES;
+    [targetToolbar addSubview:self.downloadCenterButton];
+
+    // 活动指示器（按钮右侧，下载中时旋转）
+    self.downloadCenterActivityIndicator = [[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleMedium];
+    self.downloadCenterActivityIndicator.color = [UIColor whiteColor];
+    self.downloadCenterActivityIndicator.hidesWhenStopped = YES;
+    CGFloat indicatorSize = 20.0;
+    self.downloadCenterActivityIndicator.frame = CGRectMake(dcBtnWidth - indicatorSize - 4, (dcBtnHeight - indicatorSize) / 2.0, indicatorSize, indicatorSize);
+    self.downloadCenterActivityIndicator.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
+    [self.downloadCenterButton addSubview:self.downloadCenterActivityIndicator];
+
+    // 进度百分比标签（按钮中间，显示聚合进度百分比）
+    self.downloadCenterProgressLabel = [[UILabel alloc] init];
+    self.downloadCenterProgressLabel.font = [UIFont monospacedDigitSystemFontOfSize:11 weight:UIFontWeightBold];
+    self.downloadCenterProgressLabel.textColor = [UIColor whiteColor];
+    self.downloadCenterProgressLabel.textAlignment = NSTextAlignmentCenter;
+    self.downloadCenterProgressLabel.text = @"";
+    self.downloadCenterProgressLabel.frame = CGRectMake(iconSize + 6, 0, dcBtnWidth - iconSize - indicatorSize - 12, dcBtnHeight);
+    self.downloadCenterProgressLabel.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+    [self.downloadCenterButton addSubview:self.downloadCenterProgressLabel];
 
     [self fetchRemoteVersionList];
     [NSNotificationCenter.defaultCenter addObserver:self
-        selector:@selector(receiveNotification:) 
+        selector:@selector(receiveNotification:)
         name:@"InstallModpack"
         object:nil];
+
+    // ===== 下载中心入口通知监听 =====
+    // 监听 DownloadTaskManager 的通知，当有新下载任务注册或进度更新时：
+    // 1. 更新下载中心按钮的显示状态和进度百分比
+    // 2. 自动弹出下载中心弹窗（如果用户未手动关闭且没有其他模态视图）
+    // 这确保了模组、光影、资源包等所有下载都能通过下载中心统一显示进度。
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(handleDownloadTaskUpdate:)
+                                                 name:DownloadTaskManagerDidUpdateTaskNotification
+                                               object:nil];
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(handleDownloadTaskCompleted:)
+                                                 name:DownloadTaskManagerTaskCompletedNotification
+                                               object:nil];
+    // 监听下载中心被用户手动关闭的通知，设置标记避免反复自动弹出
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(handleDownloadCenterDismissed)
+                                                 name:@"DownloadCenterDidDismiss"
+                                               object:nil];
 
     if ([BaseAuthenticator.current isKindOfClass:MicrosoftAuthenticator.class]) {
         // Perform token refreshment on startup
@@ -145,13 +196,6 @@ static void *ProgressObserverContext = &ProgressObserverContext;
             }
         };
         [BaseAuthenticator.current refreshTokenWithCallback:callback];
-    }
-}
-
-- (void)setViewControllers:(NSArray<UIViewController *> *)viewControllers animated:(BOOL)animated {
-    [super setViewControllers:viewControllers animated:animated];
-    if (!viewControllers.firstObject.toolbarItems && self.globalToolbarItems) {
-        viewControllers.firstObject.toolbarItems = self.globalToolbarItems;
     }
 }
 
@@ -181,7 +225,7 @@ static void *ProgressObserverContext = &ProgressObserverContext;
 }
 
 - (void)fetchRemoteVersionList {
-    [(id)(self.buttonInstall ?: self.buttonInstallItem) setEnabled:NO];
+    self.buttonInstall.enabled = NO;
     remoteVersionList = @[
         @{@"id": @"latest-release", @"type": @"release"},
         @{@"id": @"latest-snapshot", @"type": @"snapshot"}
@@ -207,11 +251,16 @@ static void *ProgressObserverContext = &ProgressObserverContext;
         [remoteVersionList addObjectsFromArray:responseObject[@"versions"]];
         NSDebugLog(@"[VersionList] Got %d versions", remoteVersionList.count);
         setPrefObject(@"internal.latest_version", responseObject[@"latest"]);
-        [(id)(self.buttonInstall ?: self.buttonInstallItem) setEnabled:YES];
+        self.buttonInstall.enabled = YES;
     } failure:^(NSURLSessionTask *operation, NSError *error) {
         NSDebugLog(@"[VersionList] Warning: Unable to fetch version list: %@", error.localizedDescription);
-        [(id)(self.buttonInstall ?: self.buttonInstallItem) setEnabled:YES];
+        self.buttonInstall.enabled = YES;
     }];
+}
+
+- (void)fetchRemoteVersionListForce:(BOOL)force {
+    // 直接调用 fetchRemoteVersionList，忽略 force 参数
+    [self fetchRemoteVersionList];
 }
 
 // Invoked by: startup, instance change event
@@ -229,6 +278,125 @@ static void *ProgressObserverContext = &ProgressObserverContext;
     }
     [self.versionPickerView selectRow:self.profileSelectedAt inComponent:0 animated:NO];
     [self pickerView:self.versionPickerView didSelectRow:self.profileSelectedAt inComponent:0];
+}
+
+- (void)dealloc {
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
+    // 关键修复（KVO 泄漏）：兜底移除 KVO 观察者。
+    // 正常流程中下载完成/出错时已移除，但若 VC 在下载过程中被释放（如退出启动器），
+    // KVO 观察者会指向已释放对象，导致野指针崩溃。
+    if (self.task && self.task.progress) {
+        @try {
+            [self.task.progress removeObserver:self
+                                    forKeyPath:@"fractionCompleted"
+                                       context:ProgressObserverContext];
+        } @catch (NSException *e) {}
+    }
+}
+
+#pragma mark - 下载中心（参照 FCL/ZL2/HMCL 下载进度弹窗）
+
+/// 打开下载中心弹窗
+/// 参照 FCL/ZL2/HMCL 的下载进度显示方式：以 FormSheet 方式弹出 DownloadTasksViewController，
+/// 集中显示所有下载任务（MC本体/模组/光影/资源包/数据包/世界存档/整合包）的实时进度。
+/// 所有通过 DownloadTaskManager 注册的下载任务都会在这里显示，实现统一的下载进度管理。
+- (void)openDownloadCenter {
+    // 如果已经弹出了下载中心，直接返回避免重复弹出
+    if (self.presentedDownloadCenterVC) {
+        return;
+    }
+
+    // 用户主动打开了下载中心，重置"用户已关闭"标记
+    self.userDismissedDownloadCenter = NO;
+
+    DownloadTasksViewController *downloadCenterVC = [[DownloadTasksViewController alloc] init];
+    downloadCenterVC.modalPresentationStyle = UIModalPresentationFormSheet;
+    downloadCenterVC.preferredContentSize = CGSizeMake(500, 600);
+
+    // 弱引用持有，避免循环持有
+    self.presentedDownloadCenterVC = downloadCenterVC;
+
+    // 获取最顶层的视图控制器来 present
+    UIViewController *topVC = self;
+    while (topVC.presentedViewController) {
+        topVC = topVC.presentedViewController;
+    }
+
+    [topVC presentViewController:downloadCenterVC animated:YES completion:nil];
+}
+
+/// 处理下载任务更新通知（进度变化、新任务注册等）
+/// 当收到通知时仅更新下载中心按钮的状态，不再自动弹出下载中心界面。
+///
+/// 修改说明（修复下载版本时出现两个进度显示的问题）：
+///   之前此方法会在检测到活跃下载任务时自动弹出 DownloadTasksViewController（下载中心界面），
+///   同时启动器自身在 launchMinecraft: 中会自动弹出 DownloadProgressViewController
+///   （FCL/ZL2 风格单任务进度），导致两个进度显示同时出现。
+///   现在统一为 FCL/ZL2/HMCL 风格：版本下载开始时自动弹出 DownloadProgressViewController，
+///   DownloadTasksViewController 仅保留为手动打开（通过下载中心按钮）。
+- (void)handleDownloadTaskUpdate:(NSNotification *)notification {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [self updateDownloadCenterButton];
+    });
+}
+
+/// 处理下载任务完成通知
+- (void)handleDownloadTaskCompleted:(NSNotification *)notification {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [self updateDownloadCenterButton];
+    });
+}
+
+/// 处理下载中心被用户手动关闭的通知
+/// 设置 userDismissedDownloadCenter=YES，避免后续下载任务更新时反复自动弹出下载中心。
+/// 用户可以通过点击启动器上的"下载中心"按钮重新打开（会重置此标记）。
+- (void)handleDownloadCenterDismissed {
+    self.userDismissedDownloadCenter = YES;
+    self.presentedDownloadCenterVC = nil;
+}
+
+/// 更新下载中心按钮的显示状态和进度百分比
+- (void)updateDownloadCenterButton {
+    DownloadTaskManager *manager = [DownloadTaskManager sharedManager];
+    NSArray<DownloadTaskItem *> *allTasks = [manager allTasks];
+
+    if (allTasks.count == 0) {
+        self.downloadCenterButton.hidden = YES;
+        [self.downloadCenterActivityIndicator stopAnimating];
+        return;
+    }
+
+    self.downloadCenterButton.hidden = NO;
+
+    BOOL hasActive = NO;
+    BOOL allCompleted = YES;
+    double totalProgress = 0.0;
+    NSInteger activeCount = 0;
+
+    for (DownloadTaskItem *task in allTasks) {
+        if (task.state == DownloadTaskStateDownloading || task.state == DownloadTaskStatePending) {
+            hasActive = YES;
+            allCompleted = NO;
+            totalProgress += task.progress;
+            activeCount++;
+        } else if (task.state != DownloadTaskStateCompleted) {
+            allCompleted = NO;
+        }
+    }
+
+    if (hasActive) {
+        double avgProgress = activeCount > 0 ? totalProgress / activeCount : 0.0;
+        NSInteger percent = (NSInteger)(avgProgress * 100.0 + 0.5);
+        percent = MAX(0, MIN(100, percent));
+        self.downloadCenterProgressLabel.text = [NSString stringWithFormat:@"%ld%%", (long)percent];
+        [self.downloadCenterActivityIndicator startAnimating];
+    } else if (allCompleted) {
+        self.downloadCenterProgressLabel.text = @"完成";
+        [self.downloadCenterActivityIndicator stopAnimating];
+    } else {
+        self.downloadCenterProgressLabel.text = @"暂停";
+        [self.downloadCenterActivityIndicator stopAnimating];
+    }
 }
 
 #pragma mark - Options
@@ -260,6 +428,23 @@ static void *ProgressObserverContext = &ProgressObserverContext;
     vc.filepath = path;
     vc.hitEnterAfterWindowShown = hitEnter;
     if (!vc.requiredJavaVersion) {
+        // 解析失败（manifest 缺失/主类非法）时明确提示，避免静默 return 让用户以为安装器已启动
+        showDialog(localize(@"Error", nil),
+            [NSString stringWithFormat:@"无法解析安装器主类或 Java 版本：%@", path.lastPathComponent]);
+        return;
+    }
+    // execute_jar 路径：Caciocavallo17 jar 现已统一为 Java 17 编译版本，
+    // Java 17/21 均可加载，不再需要强制提升 requiredJavaVersion 到 25。
+    // - Java 8 JAR（如 OptiFine 安装器）走 Caciocavallo（非 17）路径，用 Java 8
+    // - Java 17+ JAR 走 Caciocavallo17 路径，用 Java 17/21 即可
+    // 与 JavaLauncher.m launchJar 分支保持一致。
+    int requiredJavaVersion = vc.requiredJavaVersion;
+    // 预检 execute_jar 标签的 JRE 是否已配置，避免 present 后才发现没 JRE 导致黑屏
+    // 与 LauncherRightPanelViewController.enterModInstallerWithPath: 行为一致
+    NSString *javaHome = getSelectedJavaHome(@"execute_jar", requiredJavaVersion);
+    if (!javaHome) {
+        showDialog(localize(@"Error", nil),
+            [NSString stringWithFormat:@"执行 JAR 需要 Java %d 或更高版本，但未配置对应的运行时。\n\n请到「设置 → 管理运行时」中为「执行 Jar」标签分配一个 Java %d+ 的运行时。", requiredJavaVersion, requiredJavaVersion]);
         return;
     }
     [self invokeAfterJITEnabled:^{
@@ -275,21 +460,23 @@ static void *ProgressObserverContext = &ProgressObserverContext;
 }
 
 - (void)setInteractionEnabled:(BOOL)enabled forDownloading:(BOOL)downloading {
-    self.versionTextField.alpha = enabled ? 1 : 0.2;
-    self.versionTextField.enabled = enabled;
-    self.progressViewMain.hidden = enabled;
-    self.progressText.text = nil;
-    if (downloading) {
-        if(self.buttonInstall) {
-            [self.buttonInstall setTitle:localize(enabled ? @"Play" : @"Details", nil) forState:UIControlStateNormal];
-            self.buttonInstall.enabled = YES;
-        } else {
-            self.buttonInstallItem.title = localize(enabled ? @"Play" : @"Details", nil);
-            self.buttonInstallItem.enabled = YES;
+    for (UIControl *view in self.toolbar.subviews) {
+        if ([view isKindOfClass:UIControl.class]) {
+            view.alpha = enabled ? 1 : 0.2;
+            view.enabled = enabled;
         }
-    } else {
-        self.buttonInstall.enabled = enabled;
-        self.buttonInstallItem.enabled = enabled;
+    }
+    // 启动游戏的完整性检查/下载：始终显示进度（HMCL 风格进度条+文本），
+    // 不再被悬浮球设置隐藏，确保用户在启动前能"一模一样"地看到完整性检查进度。
+    BOOL showProgressUI = YES;
+    self.progressViewMain.hidden = enabled || !showProgressUI;
+    if (!showProgressUI) {
+        self.progressText.text = nil;
+    }
+    if (downloading) {
+        [self.buttonInstall setTitle:localize(enabled ? @"Play" : @"Details", nil) forState:UIControlStateNormal];
+        self.buttonInstall.alpha = 1;
+        self.buttonInstall.enabled = YES;
     }
     UIApplication.sharedApplication.idleTimerDisabled = !enabled;
 }
@@ -325,6 +512,13 @@ static void *ProgressObserverContext = &ProgressObserverContext;
         self.task.handleError = ^{
             dispatch_async(dispatch_get_main_queue(), ^{
                 [weakSelf setInteractionEnabled:YES forDownloading:YES];
+                // 关键修复（KVO 泄漏）：出错时必须先移除 KVO 再置 nil task，
+                // 否则 task.progress 仍持有对 self 的 KVO 观察者，下次下载会重复添加。
+                @try {
+                    [weakSelf.task.progress removeObserver:weakSelf
+                                                forKeyPath:@"fractionCompleted"
+                                                   context:ProgressObserverContext];
+                } @catch (NSException *e) {}
                 weakSelf.task = nil;
                 weakSelf.progressVC = nil;
             });
@@ -336,33 +530,38 @@ static void *ProgressObserverContext = &ProgressObserverContext;
                 forKeyPath:@"fractionCompleted"
                 options:NSKeyValueObservingOptionInitial
                 context:ProgressObserverContext];
+
+            // 自动弹出 FCL/ZL2 风格的单任务进度对话框（参照 FCL 启动下载时自动显示进度对话框）
+            // 之前通过 DownloadTaskManager 通知自动弹出 DownloadTasksViewController（下载中心界面），
+            // 导致两个进度显示同时出现。现在统一使用 DownloadProgressViewController。
+            if (!weakSelf.progressVC) {
+                weakSelf.progressVC = [[DownloadProgressViewController alloc] initWithTask:weakSelf.task];
+            }
+            UINavigationController *nav = [[UINavigationController alloc] initWithRootViewController:weakSelf.progressVC];
+            nav.modalPresentationStyle = UIModalPresentationFormSheet;
+            // 检查是否已有模态视图弹出，避免覆盖重要弹窗（如账号登录）
+            UIViewController *topVC = weakSelf;
+            while (topVC.presentedViewController) {
+                topVC = topVC.presentedViewController;
+            }
+            if (!topVC.presentedViewController) {
+                [topVC presentViewController:nav animated:YES completion:nil];
+            }
         });
     });
 }
 
-- (void)performInstallOrShowDetails:(id)sender {
-    BOOL usesBarButtonItem = [sender isKindOfClass:UIBarButtonItem.class];
+- (void)performInstallOrShowDetails:(UIButton *)sender {
     if (self.task) {
+        // 显示下载进度详情（悬浮球已移除）
         if (!self.progressVC) {
-            UIViewController *vc = [[DownloadProgressViewController alloc] initWithTask:self.task];
-            self.progressVC = [[UINavigationController alloc] initWithRootViewController:vc];
-            self.progressVC.modalPresentationStyle = UIModalPresentationPopover;
-        } else if (self.progressVC.popoverPresentationController._isDismissing) {
-            // FIXME: stock bug? it crashes when users dismisses and presents this vc too fast
-            // "UIPopoverPresentationController () should have a non-nil sourceView or barButtonItem set before the presentation occurs."
-            return;
+            self.progressVC = [[DownloadProgressViewController alloc] initWithTask:self.task];
         }
-        
-        if (usesBarButtonItem) {
-            self.progressVC.popoverPresentationController.barButtonItem = sender;
-        } else {
-            self.progressVC.popoverPresentationController.sourceView = sender;
-        }
-        [self presentViewController:self.progressVC animated:YES completion:nil];
+        UINavigationController *nav = [[UINavigationController alloc] initWithRootViewController:self.progressVC];
+        nav.modalPresentationStyle = UIModalPresentationPopover;
+        nav.popoverPresentationController.sourceView = sender;
+        [self presentViewController:nav animated:YES completion:nil];
     } else {
-        if (usesBarButtonItem) {
-            sender = ((UIBarButtonItem *)sender).buttonGlassView;
-        }
         [self launchMinecraft:sender];
     }
 }
@@ -392,16 +591,27 @@ static void *ProgressObserverContext = &ProgressObserverContext;
     }
 
     dispatch_async(dispatch_get_main_queue(), ^{
-        self.progressText.text = progress.localizedAdditionalDescription;
+        // 启动游戏的完整性检查/下载：始终显示进度（HMCL 风格进度条+文本）
+        BOOL showProgressUI = YES;
+        if (showProgressUI) {
+            self.progressText.text = progress.localizedAdditionalDescription;
+        }
 
         if (!progress.finished) return;
         [self.progressVC dismissViewControllerAnimated:NO completion:nil];
 
         self.progressViewMain.observedProgress = nil;
+        // 关键修复（KVO 泄漏）：下载完成时移除 KVO 观察者。
+        // 之前不移除，导致每次下载都在 self.task.progress 上累积一个观察者，
+        // 多次下载后 progress 变化会触发多次 observeValueForKeyPath，UI 异常。
+        @try {
+            [self.task.progress removeObserver:self
+                                    forKeyPath:@"fractionCompleted"
+                                       context:ProgressObserverContext];
+        } @catch (NSException *e) {}
         if (self.task.metadata) {
-            __block NSDictionary *metadata = self.task.metadata;
             [self invokeAfterJITEnabled:^{
-                UIKit_launchMinecraftSurfaceVC(self.view.window, metadata);
+                UIKit_launchMinecraftSurfaceVC(self.view.window, self.task.metadata);
             }];
         } else {
             self.task = nil;
@@ -423,6 +633,12 @@ static void *ProgressObserverContext = &ProgressObserverContext;
         self.task.handleError = ^{
             dispatch_async(dispatch_get_main_queue(), ^{
                 [weakSelf setInteractionEnabled:YES forDownloading:YES];
+                // 关键修复（KVO 泄漏）：出错时移除 KVO，与 launchMinecraft 流程一致
+                @try {
+                    [weakSelf.task.progress removeObserver:weakSelf
+                                                forKeyPath:@"fractionCompleted"
+                                                   context:ProgressObserverContext];
+                } @catch (NSException *e) {}
                 weakSelf.task = nil;
                 weakSelf.progressVC = nil;
             });
@@ -439,9 +655,10 @@ static void *ProgressObserverContext = &ProgressObserverContext;
 }
 
 - (void)invokeAfterJITEnabled:(void(^)(void))handler {
-    localVersionList = remoteVersionList = nil;
-    BOOL hasTrollStoreJIT = getEntitlementValue(@"jb.pmap_cs.custom_trust");
-    BOOL isLiveContainer = getenv("LC_HOME_PATH") != NULL;
+    // 注意：不要在此清空 localVersionList/remoteVersionList
+    // 该方法既被 JAR 执行调用，也被正常启动游戏调用；清空会导致用户返回后版本列表为空、
+    // buttonInstall 短暂不可用。版本列表的生命周期应由 reloadProfileList 统一管理。
+    BOOL hasTrollStoreJIT = getEntitlementValue(@"com.apple.private.local.sandboxed-jit");
 
     if (isJITEnabled(false)) {
         [ALTServerManager.sharedManager stopDiscovering];
@@ -455,16 +672,6 @@ static void *ProgressObserverContext = &ProgressObserverContext;
         NSLog(@"Debug option skipped waiting for JIT. Java might not work.");
         handler();
         return;
-    } else if (@available(iOS 17.4, *)) {
-        NSString *scriptDataString = @"";
-        if(DeviceHasJITFlags(JIT_FLAG_FORCE_MIRRORED | JIT_FLAG_HAS_TXM)) {
-            NSData *scriptData = [NSData dataWithContentsOfFile:[NSBundle.mainBundle.bundlePath stringByAppendingPathComponent:@"UniversalJIT26.js"]];
-            scriptDataString = [@"&script-data=" stringByAppendingString:[scriptData base64EncodedStringWithOptions:0]];
-        }
-        [UIApplication.sharedApplication openURL:[NSURL URLWithString:[NSString stringWithFormat:@"stikjit://enable-jit?bundle-id=%@&pid=%d%@", NSBundle.mainBundle.bundleIdentifier, getpid(), scriptDataString]] options:@{} completionHandler:nil];
-    } else {
-        // Assuming 16.7-17.3.1. SideStore still lacks this URL scheme at the time of writing, so it only jumps to SideStore.
-        [UIApplication.sharedApplication openURL:[NSURL URLWithString:[NSString stringWithFormat:@"sidestore://sidejit-enable?pid=%d", getpid()]] options:@{} completionHandler:nil];
     }
 
     self.progressText.text = localize(@"launcher.wait_jit.title", nil);
@@ -536,16 +743,8 @@ static void *ProgressObserverContext = &ProgressObserverContext;
 
 - (void)viewDidLayoutSubviews {
     [super viewDidLayoutSubviews];
-    [sidebarViewController updateAccountInfo];
-    if (self.globalToolbarItems) {
-        if (!self.viewControllers.firstObject.toolbarItems) {
-            self.viewControllers.firstObject.toolbarItems = self.globalToolbarItems;
-        }
-        // resize textFieldContainer to fit, need dispatch queue or it freezes for some reason...
-        dispatch_async(dispatch_get_main_queue(), ^{
-            self.versionTextField.superview.frame = CGRectMake(0, 0, MIN(self.view.frame.size.width,self.view.frame.size.height)*0.8 - 40, 36);
-        });
-    }
+    // 发送通知更新账户信息
+    [[NSNotificationCenter defaultCenter] postNotificationName:@"UpdateAccountInfo" object:nil];
 }
 
 @end

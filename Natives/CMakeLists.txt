@@ -1,6 +1,14 @@
 cmake_minimum_required(VERSION 3.6)
 project(AngelAuraAmethyst)
 
+# 从环境变量读取 CurseForge API Key
+# 不能通过 Makefile 的 -D 参数传递，因为 Make 会对环境变量值进行递归展开，
+# 导致 bcrypt 哈希格式（$2a$10$...）中的 $2、$1、$Q 被 Make 解释为变量引用并替换为空，
+# 最终生成损坏的 Key（如 a06bVFEP... 而非 $2a$10$Q6bVFEP...）
+if(DEFINED ENV{CONFIG_CURSEFORGE_API_KEY})
+    set(CONFIG_CURSEFORGE_API_KEY "$ENV{CONFIG_CURSEFORGE_API_KEY}")
+endif()
+
 configure_file(${CMAKE_CURRENT_LIST_DIR}/config.h.in ${CMAKE_CURRENT_LIST_DIR}/config.h)
 
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -target arm64-apple-ios -mcpu=apple-a8 -fcommon -fobjc-arc -ObjC -F'${CMAKE_OSX_SYSROOT}/System/Cryptexes/OS/System/Library/Frameworks'")
@@ -26,8 +34,83 @@ include_directories(
   "external/Apple"
   "external/ballpa1n"
   "external/ballpa1n/wrapped"
+<<<<<<< HEAD
   "external/mach"
+=======
+  "external/ZeroTierFramework/ios-example-app/zt.framework/Headers"
+>>>>>>> author-fork/main
 )
+
+# ============================================================================
+# ZeroTier Apple Framework 集成
+# ============================================================================
+# 参考 ShardLauncher-iOS：将 zerotier-sockets-apple-framework 作为 git submodule
+# 引入（Natives/external/ZeroTierFramework），随仓库一起 checkout/更新，避免手动
+# 复制导致版本陈旧。构建时直接链接 submodule 中的预编译 zt.framework。
+#
+# 要更新 framework：
+#   cd Natives/external/ZeroTierFramework
+#   git fetch origin
+#   git checkout origin/main
+#   cd ../..
+#   git add Natives/external/ZeroTierFramework
+#   git commit -m "chore(deps): update ZeroTierFramework"
+set(ZT_FRAMEWORK_DIR "${CMAKE_CURRENT_LIST_DIR}/external/ZeroTierFramework/ios-example-app")
+set(ZT_FRAMEWORK_LIB "${ZT_FRAMEWORK_DIR}/zt.framework/zt")
+if(EXISTS "${ZT_FRAMEWORK_LIB}")
+  message(STATUS "Found ZeroTier framework binary: ${ZT_FRAMEWORK_LIB}")
+  set(ZT_FRAMEWORK_SEARCH_PATH "-F'${ZT_FRAMEWORK_DIR}'")
+  set(ZT_FRAMEWORK_LINK "-framework zt")
+  set(ZT_CXX_LIB "-lc++")
+else()
+  message(FATAL_ERROR "ZeroTier framework not found at ${ZT_FRAMEWORK_LIB}. Please run: git submodule update --init --recursive")
+endif()
+
+# ============================================================================
+# libterracotta.xcframework 集成（陶瓦联机）
+# ============================================================================
+# 陶瓦联机（Terracotta）是 HMCL/FCL/ZL2/PCL-CE 共用的统一联机协议，底层基于
+# EasyTier P2P 组网。CraftLink 项目（github.com/yitenchen123/CraftLink）通过 CI
+# 构建 iOS 平台的 xcframework 静态库（terracotta_ios_* C ABI），与 HMCL/FCL/ZL2
+# v0.4.2 完全互通。
+#
+# xcframework 获取方式（开发者构建前置）：
+#   1. 访问 CraftLink CI 构建页：https://github.com/yitenchen123/CraftLink/actions
+#      选择最新的 build-terracotta-xcframework 工作流运行
+#   2. 在 Artifacts 中下载 libterracotta-xcframework-v042（约 34MB zip）
+#   3. 解压后将 libterracotta.xcframework 目录放入 Natives/terracotta/
+#      最终路径应为 Natives/terracotta/libterracotta.xcframework/ios-arm64/libterracotta.a
+#   4. 重新执行 make all 即可链接
+#
+# 检测逻辑：
+#   Level 1 — xcframework：检测 libterracotta.xcframework/ios-arm64/libterracotta.a
+#   Level 2 — 独立 .a：检测 libterracotta.a（向后兼容）
+#   未命中 — 警告并禁用联机功能（不阻断编译，方便无联机需求的开发者）
+#
+# 注意：libterracotta 是 Rust 静态库，含未直接引用的 static initializers
+# （如 EasyTier tokio runtime 注册），必须用 -force_load 强制加载整个库。
+# 同时需要链接 Rust 依赖的 libc++ 和 libresolv。
+# terracotta.h 中的 C ABI 函数用 __attribute__((weak)) 声明，库未链接时
+# 符号为 NULL，TerracottaBridge 运行时检查 terracotta_ios_available() 安全降级。
+set(TERRACOTTA_LIB_DIR "${CMAKE_CURRENT_LIST_DIR}/terracotta")
+set(TERRACOTTA_XCFW "${TERRACOTTA_LIB_DIR}/libterracotta.xcframework")
+set(TERRACOTTA_LIB "")
+set(TERRACOTTA_AVAILABLE OFF)
+
+if(EXISTS "${TERRACOTTA_XCFW}/ios-arm64/libterracotta.a")
+  set(_TC_LIB_PATH "${TERRACOTTA_XCFW}/ios-arm64/libterracotta.a")
+  message(STATUS "Found libterracotta XCFramework (Level 1: xcframework) at ${_TC_LIB_PATH}")
+  set(TERRACOTTA_LIB "-Wl,-force_load,${_TC_LIB_PATH}")
+  set(TERRACOTTA_AVAILABLE ON)
+elseif(EXISTS "${TERRACOTTA_LIB_DIR}/libterracotta.a")
+  set(_TC_LIB_PATH "${TERRACOTTA_LIB_DIR}/libterracotta.a")
+  message(STATUS "Found libterracotta static lib (Level 2: standalone .a) at ${_TC_LIB_PATH}")
+  set(TERRACOTTA_LIB "-Wl,-force_load,${_TC_LIB_PATH}")
+  set(TERRACOTTA_AVAILABLE ON)
+else()
+  message(WARNING "libterracotta not found at ${TERRACOTTA_XCFW}. Terracotta multiplayer will be disabled. "
+                  "Download from CraftLink CI: https://github.com/yitenchen123/CraftLink/actions")
+endif()
 
 # For cacio support library
 set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -rpath @loader_path -rpath @executable_path/java_runtimes/java-8-openjdk/lib -rpath /usr/lib/jvm/java-8-openjdk/lib")
@@ -47,16 +130,55 @@ target_link_libraries(awt_xawt
   awt_headless
 )
 
-# TouchController iOS static library
-# Links to libproxy_server_ios.a (device) or libproxy_server_ios_simulator.a (simulator)
-# Provides JNI interface for touch control communication between Minecraft mod and launcher
+# TouchController iOS native library
+# Provides JNI / C API for touch control communication between Minecraft mod and launcher
+#
+# 三级回退检测逻辑（按优先级从高到低）：
+#   Level 1 — 预编译 XCFramework：检测 TouchController.xcframework/，从 ios-arm64
+#             子目录提取设备静态库链接（由 build_xcframework.sh 生成）
+#   Level 2 — 预编译独立 .a：检测 libproxy_server_ios.a (device) 或
+#             libproxy_server_ios_simulator.a (simulator)，保持向后兼容
+#   Level 3 — 源码编译回退：检测 ios_transport.c 源文件，CMake 直接编译为对象库
+#   禁用   — 以上都不存在时，TOUCHCONTROLLER_LIB 置空并打印警告
+#
+# 重要：TouchControllerBridge.m 通过 dlsym(RTLD_DEFAULT, "touchcontroller_ios_*")
+# 运行时查找符号，编译期没有任何直接引用。Apple ld 处理静态库（.a）时按需加载，
+# 只提取被直接引用的对象文件——未被引用的对象文件会被丢弃，导致 dlsym 找不到符号。
+# 因此：
+#   - Level 1/2（预编译 .a）：必须用 -Wl,-force_load,<path> 强制加载整个静态库
+#   - Level 3（源码编译）：改用 OBJECT 库，对象文件直接链接到可执行文件，
+#     所有符号自动保留，无需 -force_load
 set(TOUCHCONTROLLER_LIB_DIR "${CMAKE_CURRENT_LIST_DIR}/TouchController")
-if(EXISTS "${TOUCHCONTROLLER_LIB_DIR}/libproxy_server_ios.a")
-  message(STATUS "Found TouchController device library")
-  set(TOUCHCONTROLLER_LIB "${TOUCHCONTROLLER_LIB_DIR}/libproxy_server_ios.a")
+set(TOUCHCONTROLLER_XCFW "${TOUCHCONTROLLER_LIB_DIR}/TouchController.xcframework")
+set(TOUCHCONTROLLER_LIB "")
+
+# Level 1: 预编译 XCFramework（最高优先级）
+if(EXISTS "${TOUCHCONTROLLER_XCFW}/ios-arm64/libproxy_server_ios.a")
+  set(_TC_LIB_PATH "${TOUCHCONTROLLER_XCFW}/ios-arm64/libproxy_server_ios.a")
+  message(STATUS "Found TouchController XCFramework (Level 1: prebuilt xcframework) at ${_TC_LIB_PATH}")
+  # 强制加载整个静态库，确保 dlsym 能找到所有 touchcontroller_ios_* 符号
+  set(TOUCHCONTROLLER_LIB "-Wl,-force_load,${_TC_LIB_PATH}")
+# Level 2: 预编译独立 .a（保持兼容）
+elseif(EXISTS "${TOUCHCONTROLLER_LIB_DIR}/libproxy_server_ios.a")
+  set(_TC_LIB_PATH "${TOUCHCONTROLLER_LIB_DIR}/libproxy_server_ios.a")
+  message(STATUS "Found TouchController device library (Level 2: prebuilt .a) at ${_TC_LIB_PATH}")
+  set(TOUCHCONTROLLER_LIB "-Wl,-force_load,${_TC_LIB_PATH}")
 elseif(EXISTS "${TOUCHCONTROLLER_LIB_DIR}/libproxy_server_ios_simulator.a")
-  message(STATUS "Found TouchController simulator library")
-  set(TOUCHCONTROLLER_LIB "${TOUCHCONTROLLER_LIB_DIR}/libproxy_server_ios_simulator.a")
+  set(_TC_LIB_PATH "${TOUCHCONTROLLER_LIB_DIR}/libproxy_server_ios_simulator.a")
+  message(STATUS "Found TouchController simulator library (Level 2: prebuilt .a) at ${_TC_LIB_PATH}")
+  set(TOUCHCONTROLLER_LIB "-Wl,-force_load,${_TC_LIB_PATH}")
+# Level 3: 源码编译回退（使用 OBJECT 库确保所有符号被保留）
+elseif(EXISTS "${TOUCHCONTROLLER_LIB_DIR}/ios_transport.c")
+  message(STATUS "Building TouchController from source (Level 3: source compilation)")
+  # 使用 OBJECT 库而非 STATIC 库：对象文件直接链接到可执行文件，
+  # 所有符号自动保留，避免 dlsym 找不到符号的问题
+  add_library(proxy_server_ios OBJECT
+    ${TOUCHCONTROLLER_LIB_DIR}/ios_transport.c
+    ${TOUCHCONTROLLER_LIB_DIR}/ring_buffer.c
+  )
+  target_include_directories(proxy_server_ios PRIVATE ${TOUCHCONTROLLER_LIB_DIR})
+  set(TOUCHCONTROLLER_LIB proxy_server_ios)
+# 全部未命中：禁用 TouchController 支持
 else()
   message(STATUS "TouchController library not found, TouchController support will be disabled")
   set(TOUCHCONTROLLER_LIB "")
@@ -77,6 +199,71 @@ target_link_libraries(tinygl4angle
   "-F'${CMAKE_CURRENT_LIST_DIR}/resources/Frameworks'"
   "-framework libEGL"
   "-framework libGLESv2"
+)
+
+# LTW (Large Thin Wrapper) - OpenGL Core 3.3 → OpenGL ES 3 转译层
+# 复刻自官方 MojoLauncher/LTW 仓库（master 分支），iOS 移植修改：
+#   - proc.c: 从 libtinygl4angle.dylib 加载 eglGetProcAddress（替代 libEGL.so）
+#   - egl.c/egl.h: thread_local → pthread_key_t（更可靠的 TLS）
+#   - shader_wrapper.c: 修复 offset 未递增 bug（count > 1 时 shader 源码损坏）
+#   - ltw_compat/threads.h: 提供 C11 <threads.h> 兼容（iOS SDK 不提供）
+# 功能：
+#   - 伪装成 OpenGL 3.3 Core Profile 让 MC 1.17+ 正常运行
+#   - 主动声明 GL_ARB_buffer_storage / GL_ARB_texture_buffer_object 等 ARB 扩展
+#     让 Sodium 的 persistent mapped buffers / texture buffers 正常工作
+#   - 主动声明 GL_ARB_draw_buffers_blend（Iris 必需）
+#   - 主动声明 GL_ARB_timer_query（Blaze3D TimerQuery）
+#   - Fragment shader 编译失败时忽略错误（shader_wrapper.c HACK），
+#     让 BSL/Mellow Shader 等光影包能在 ES 上运行
+set(LTW_DIR "${CMAKE_CURRENT_LIST_DIR}/external/LTW/ltw/src/main/tinywrapper")
+set(LTW_INCLUDES
+  "${LTW_DIR}"
+  "${LTW_DIR}/GL"
+  "${CMAKE_CURRENT_LIST_DIR}/cmake/ltw_compat"
+  "${LTW_DIR}/glsl_optimizer/include"
+  "${LTW_DIR}/glsl_optimizer/src"
+  "${LTW_DIR}/vgpu_shaderconv"
+  "${LTW_DIR}/unordered_map"
+  "${CMAKE_CURRENT_LIST_DIR}/external/MobileGlues/src/main/cpp/include"
+)
+
+include(cmake/ltw_sources.cmake)
+
+add_library(glsl_optimizer STATIC ${GLSL_OPTIMIZER_SRC})
+target_include_directories(glsl_optimizer PRIVATE ${LTW_INCLUDES})
+set_target_properties(glsl_optimizer PROPERTIES
+  POSITION_INDEPENDENT_CODE ON
+  CXX_STANDARD 17
+  C_STANDARD 11
+)
+target_compile_definitions(glsl_optimizer PRIVATE
+  _LIB NOMINMAX _USE_MATH_DEFINES __STDC_NO_THREADS__
+  __STDC_LIMIT_MACROS __STDC_FORMAT_MACROS __STDC_CONSTANT_MACROS
+  UTL_ARCH_LITTLE_ENDIAN UNIX
+  HAVE_OPENGL HAVE_OPENGL_ES_1 HAVE_OPENGL_ES_2
+  HAVE_TIMESPEC_GET HAVE_STRUCT_TIMESPEC
+  VK_DESCRIPTOR_TYPE_INLINE_UNIFORM_BLOCK=VK_DESCRIPTOR_TYPE_INLINE_UNIFORM_BLOCK_EXT
+)
+
+add_library(ltw SHARED ${LTW_CORE_SRC})
+target_include_directories(ltw PRIVATE ${LTW_INCLUDES})
+target_link_libraries(ltw
+  "${GLOBAL_LDFLAGS}"
+  glsl_optimizer
+  "-F'${CMAKE_CURRENT_LIST_DIR}/resources/Frameworks'"
+  "-framework libEGL"
+  "-framework libGLESv2"
+)
+set_target_properties(ltw PROPERTIES
+  C_STANDARD 11
+  C_STANDARD_REQUIRED ON
+)
+target_compile_definitions(ltw PRIVATE
+  _LIB NOMINMAX _USE_MATH_DEFINES __STDC_NO_THREADS__
+  __STDC_LIMIT_MACROS __STDC_FORMAT_MACROS __STDC_CONSTANT_MACROS
+  UTL_ARCH_LITTLE_ENDIAN UNIX
+  HAVE_OPENGL HAVE_OPENGL_ES_1 HAVE_OPENGL_ES_2
+  HAVE_TIMESPEC_GET HAVE_STRUCT_TIMESPEC
 )
 
 # AFNetworking
@@ -116,6 +303,7 @@ add_executable(AngelAuraAmethyst
   JavaLauncher.m
   external/fishhook/fishhook.c
   UIKit+hook.m
+  ScreenUtils.m
 
   authenticator/BaseAuthenticator.m
   authenticator/LocalAuthenticator.m
@@ -124,6 +312,7 @@ add_executable(AngelAuraAmethyst
 
   ctxbridges/gl_bridge.m
   ctxbridges/osm_bridge.m
+  ctxbridges/vk_bridge.m
 
   customcontrols/ControlButton.m
   customcontrols/ControlDrawer.m
@@ -141,27 +330,55 @@ add_executable(AngelAuraAmethyst
 
   installer/FabricInstallViewController.m
   installer/ForgeInstallViewController.m
+  installer/ForgeInstallSchemeViewController.m
+  installer/ForgeDirectInstaller.m
+  installer/NeoForgeDirectInstaller.m
   installer/ModpackInstallViewController.m
+  installer/ModLoaderInstallViewController.m
   installer/FabricUtils.m
+  installer/NeoForgeVersionFetcher.m
   installer/modpack/ModpackUtils.m
+  installer/modpack/ModpackConfiguration.m
   installer/modpack/ModpackAPI.m
   installer/modpack/ModrinthAPI.m
+	installer/modpack/CurseForgeAPI.m
 
   input/ControllerInput.m
   input/GyroInput.m
   input/KeyboardInput.m
 
   AccountListViewController.m
+  AccountLoginViewController.m
+  ThirdPartyLoginViewController.m
+  GameMenuOverlayView.m
+  InlineMessageView.m
+  DownloadTaskItem.m
+  DownloadTaskManager.m
+  DownloadTasksViewController.m
   AppDelegate.m
   CustomControlsViewController.m
   CustomControlsViewController+UndoManager.m
   DownloadProgressViewController.m
+  DownloadProgressCardView.m
   FileListViewController.m
   GameSurfaceView.m
   JavaGUIViewController.m
+  MultiplayerManager.m
+  MultiplayerViewController.m
+  LanPortDetector.m
+  ZeroTierBridge.m
+  SOCKS5Proxy.m
+  PortForwarder.m
   LauncherMenuViewController.m
   LauncherNavigationController.m
   LauncherNewsViewController.m
+  HomeCustomizeViewController.m
+  LauncherRootViewController.m
+  LauncherCardLayoutViewController.m
+  LauncherRightPanelViewController.m
+  VersionManagerViewController.m
+  ProfileSettingsViewController.m
+  DownloadViewController.m
   LauncherPreferences.m
   LauncherPreferencesViewController.m
   LauncherPrefContCfgViewController.m
@@ -175,6 +392,7 @@ add_executable(AngelAuraAmethyst
   MinecraftResourceUtils.m
   PickTextField.m
   PLLogOutputView.m
+  PLCrashView.m
   PLPickerView.m
   PLPreferences.m
   PLPrefTableViewController.m
@@ -187,9 +405,13 @@ add_executable(AngelAuraAmethyst
   SurfaceViewController+Navigation.m
   TrackedTextField.m
   egl_bridge.m
+  ZinkConfig.m
   input_bridge_v3.m
   ios_uikit_bridge.m
   utils.m
+
+  # Version card cell (shared between DownloadViewController and LauncherProfilesViewController)
+  VersionCardCell.m
 
   # Mod-related sources (ensure implementations are compiled and linked)
   MarqueeLabel.m
@@ -202,13 +424,107 @@ add_executable(AngelAuraAmethyst
   ModVersionViewController.m
   ModVersionTableViewCell.m
 
+  # 通用资源详情页头部视图（Mod/Shader/Asset 版本页共用，展示项目封面图/信息/标签/描述）
+  AssetDetailHeaderView.m
+
+  # 模组加载器图标统一工具类（优先 bundle PNG，回退 SF Symbol，统一全项目加载器品牌色与图标）
+  ModLoaderIconHelper.m
+
+  # 统一的项目图标加载器（双层缓存+降采样+并发控制+CDN镜像，参照 FCL Glide + ZL2 Coil）
+  IconLoader.m
+
+  # MCIM 模组镜像源工具类（参考 ZalithLauncher 2 MCIMMirror.kt）
+  MCIMMirror.m
+
+  # Shader-related sources
+  ShaderItem.m
+  ShaderService.m
+  ShaderTableViewCell.m
+  ShaderVersion.m
+  ShaderVersionTableViewCell.m
+  ShaderVersionViewController.m
+  ShadersManagerViewController.m
+
+  # Modpack import/export sources
+  ModpackImportViewController.m
+  ModpackImportService.m
+  ModpackExportService.m
+  ModpackExportViewController.m
+
+  # CurseForge MurmurHash2 fingerprint tool
+  MurmurHash2.m
+
+  # Resource Pack / Data Pack / World management (services, items, version VC, manager VCs)
+  ResourcePackItem.m
+  DataPackItem.m
+  WorldItem.m
+  ResourcePackService.m
+  DataPackService.m
+  WorldService.m
+  AssetVersionViewController.m
+  ResourcePacksManagerViewController.m
+  DataPacksManagerViewController.m
+  WorldsManagerViewController.m
+
+  # Server projects (Modrinth Server Projects + CurseForge server packs)
+  ServerItem.m
+  ServerService.m
+  ServerListViewController.m
+  ServerDetailViewController.m
+
+  # CurseForge API Key settings page
+  installer/CurseForgeAPIKeyViewController.m
+
+  # Mod update service (dual-source SHA1/MurmurHash2 reverse lookup)
+  ModUpdateService.m
+  ModUpdateViewController.m
+
   # Custom icon management sources
   CustomIconManager.m
   ImageCropperViewController.m
 
+  # Account custom avatar management sources
+  AvatarManager.m
+
+  # Background wallpaper sources
+  BackgroundManager.m
+  BackgroundSettingsViewController.m
+
+  # FCL-style interface is implemented in LauncherMenuViewController.m
+
   # TouchController bridge and preferences
   TouchControllerBridge.m
   TouchControllerPreferencesViewController.m
+
+  # Terracotta multiplayer（陶瓦联机，与 HMCL/FCL/ZL2 互通）
+  # 源文件直接放在 Natives/ 目录（与其他 .m 同级），二进制库放在
+  # Natives/terracotta/libterracotta.xcframework/。
+  # C ABI 符号由 libterracotta.a 提供，未链接时 TerracottaBridge 通过
+  # weak linking 检测 terracotta_ios_available() 安全降级，不影响编译。
+  TerracottaBridge.m
+  TerracottaManager.m
+  SilentAudioPlayer.m
+  TerracottaViewController.m
+
+  # Update checker（参考 FCL/ZL2，使用 GitHub Releases API 检查正式版更新）
+  UpdateChecker.m
+
+  # Minecraft 新闻（参考 PCL-CE，调用 minecraft-services.net 官方新闻 API）
+  MinecraftNewsItem.m
+  MinecraftNewsService.m
+  MinecraftNewsViewController.m
+
+  # 公告系统（从官网拉取 JSON，支持 Markdown 渲染）
+  AnnouncementItem.m
+  AnnouncementService.m
+  MarkdownParser.m
+  AnnouncementListViewController.m
+  AnnouncementDetailViewController.m
+
+  # 匿名使用统计服务（设备信息采集、5 分钟心跳上报、MC 版本级追踪、崩溃上报、启动器开启计数）
+  AnalyticsService.m
+  # 使用统计展示页（从 api/stats.php 拉取统计数据，分区展示）
+  AnalyticsStatsViewController.m
 )
 
 # Add ModLoaderIcons PNG files into the app bundle Resources/ModLoaderIcons so they are available at runtime.
@@ -234,43 +550,14 @@ if("${CMAKE_HOST_SYSTEM_NAME}" MATCHES "Linux|^GNU$|Android")
   target_sources(AngelAuraAmethyst PUBLIC non_darwin_utils.m)
 endif()
 
-# Option to enable minizip; default OFF to avoid build failures if zlib-ng is not present.
-option(MINIZIP_ENABLED "Enable building bundled minizip (requires zlib/zlib-ng)" OFF)
-
-# Optionally add minizip sources only if the directory exists AND MINIZIP_ENABLED is ON.
-set(MINIZIP_DIR "${CMAKE_CURRENT_LIST_DIR}/minizip")
-if(MINIZIP_ENABLED AND EXISTS "${MINIZIP_DIR}")
-  file(GLOB MINIZIP_SRCS
-    "${MINIZIP_DIR}/*.c"
-    "${MINIZIP_DIR}/*.m"
-    "${MINIZIP_DIR}/*.cpp"
-    "${MINIZIP_DIR}/*.cc"
-  )
-  if(MINIZIP_SRCS)
-    message(STATUS "Found minizip sources: ${MINIZIP_SRCS}")
-    target_sources(AngelAuraAmethyst PRIVATE ${MINIZIP_SRCS})
-    target_include_directories(AngelAuraAmethyst PRIVATE "${MINIZIP_DIR}")
-    # Link zlib if available - on macOS the library is 'z'
-    find_library(ZLIB_LIB z)
-    if(ZLIB_LIB)
-      target_link_libraries(AngelAuraAmethyst PUBLIC ${ZLIB_LIB})
-    endif()
-  else()
-    message(STATUS "minizip folder exists but no source files found.")
-  endif()
-else()
-  if(EXISTS "${MINIZIP_DIR}")
-    message(STATUS "minizip folder found but MINIZIP_ENABLED is OFF — skipping compilation.")
-  else()
-    message(STATUS "minizip folder not found, skipping minizip compilation.")
-  endif()
-endif()
-
 target_link_libraries(AngelAuraAmethyst
   PUBLIC AFNetworking
   lzma
   "-F'${CMAKE_CURRENT_LIST_DIR}/build'"
   "-F'${CMAKE_CURRENT_LIST_DIR}/resources/Frameworks'"
+  "${ZT_FRAMEWORK_SEARCH_PATH}"
+  "${ZT_FRAMEWORK_LINK}"
+  "${ZT_CXX_LIB}"
   "-framework AltKit"
   "-framework AuthenticationServices"
   "-framework AVFoundation"
@@ -278,6 +565,8 @@ target_link_libraries(AngelAuraAmethyst
   "-framework CoreFoundation"
   "-framework CoreGraphics"
   "-framework CoreImage"
+  "-framework CoreMedia"
+  "-framework ImageIO"
   "-framework CoreMotion"
   "-framework GameController"
   "-framework IOKit"
@@ -288,6 +577,10 @@ target_link_libraries(AngelAuraAmethyst
   "-framework WebKit"
   "-weak_framework SafariServices"
   ${TOUCHCONTROLLER_LIB}
+  # Terracotta multiplayer（陶瓦联机）—— libterracotta 是 Rust 静态库，需要 libc++/resolv
+  ${TERRACOTTA_LIB}
+  "-lc++"
+  "-lresolv"
 )
 set_target_properties(AngelAuraAmethyst PROPERTIES
   MACOSX_BUNDLE TRUE

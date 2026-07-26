@@ -77,6 +77,11 @@ void openURLGlobal(NSString *path) {
 /**
  * Hooked version of java.lang.UNIXProcess.forkAndExec()
  * which is used to handle the "open" command.
+ *
+ * iOS 沙箱禁止 fork/exec，原生 forkAndExec 必然失败并可能导致进程崩溃。
+ * 此处对非 "open" 命令不再透传给原生实现，而是抛出明确的 Java IOException，
+ * 让调用方（如 Forge/NeoForge installer.jar 的 processor 步骤）能优雅失败而非原生崩溃。
+ * "open" 命令仍走 URL scheme 转发到 Files/Filza 等外部应用。
  */
 jint
 hooked_ProcessImpl_forkAndExec(JNIEnv *env, jobject process, jint mode, jbyteArray helperpath, jbyteArray prog, jbyteArray argBlock, jint argc, jbyteArray envBlock, jint envc, jbyteArray dir, jintArray std_fds, jboolean redirectErrorStream) {
@@ -84,8 +89,16 @@ hooked_ProcessImpl_forkAndExec(JNIEnv *env, jobject process, jint mode, jbyteArr
 
     // Here we only handle the "open" command
     if (strcmp(basename(pProg), "open")) {
+        // 非 "open" 命令：iOS 沙箱禁止 fork/exec，透传给原生实现会导致
+        // "Operation not permitted" 或直接崩溃。改为抛 IOException 让上层优雅失败。
+        NSLog(@"[input_bridge] Blocked fork/exec of '%s' (iOS sandbox forbids fork/exec)", pProg);
         (*env)->ReleaseByteArrayElements(env, prog, (jbyte *)pProg, 0);
-        return orig_ProcessImpl_forkAndExec(env, process, mode, helperpath, prog, argBlock, argc, envBlock, envc, dir, std_fds, redirectErrorStream);
+        jclass exClass = (*env)->FindClass(env, "java/io/IOException");
+        if (exClass != NULL) {
+            (*env)->ThrowNew(env, exClass, "fork/exec not permitted on iOS sandbox");
+            (*env)->DeleteLocalRef(env, exClass);
+        }
+        return -1;
     }
 
     char *path = (char *)((*env)->GetByteArrayElements(env, argBlock, NULL));
@@ -412,8 +425,10 @@ JNIEXPORT void JNICALL Java_org_lwjgl_glfw_CallbackBridge_nativeSetGrabbing(JNIE
     }
 
     dispatch_async(dispatch_get_main_queue(), ^{
-        SurfaceViewController *vc = ((SurfaceViewController *)UIWindow.mainWindow.rootViewController);
-        [vc updateGrabState];
+        SurfaceViewController *vc = [SurfaceViewController currentInstance];
+        if (vc) {
+            [vc updateGrabState];
+        }
     });
 }
 
@@ -432,6 +447,48 @@ void CallbackBridge_nativeSetInputReady(BOOL inputReady) {
             GLFW_invoke_FramebufferSize((void*) showingWindow, windowWidth, windowHeight);
         }
     }
+}
+
+// ============================================================================
+// issue #27 修复（参照 FCL commit 08c0716）：物理键盘 modifier 同步
+//
+// MC 1.21.9+ 不再仅依赖 key 回调中的 mods 参数，而是通过
+// InputConstants.isKeyDown(window, GLFW_KEY_LEFT_SHIFT) 查询 modifier 状态。
+// 该状态由 MC 内部缓存维护，仅靠 GLFW key callback 无法同步，
+// 必须显式调用 Java 端 setModifiers 才能更新。
+//
+// 此处通过 JNI 反射调用 com.mojang.blaze3d.platform.InputConstants
+// 的内部方法（如果存在），实现 modifier 缓存的显式同步。
+// 旧版本 MC 没有此机制，调用会安全失败（找不到方法直接返回）。
+//
+// 由 KeyboardInput.m 在物理键盘事件中调用（pressesBegan/pressesEnded），
+// 也可被 Java 端 CallbackBridge.nativeSetModifiers 调用。
+// ============================================================================
+void CallbackBridge_syncModifiersToMC(int mods) {
+    JNIEnv *env = runtimeJNIEnvPtr;
+    if (!env || !isInputReady) return;
+
+    jclass inputConstantsClass = (*env)->FindClass(env, "com/mojang/blaze3d/platform/InputConstants");
+    if (!inputConstantsClass) {
+        if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
+        return;
+    }
+    jmethodID setModifiersMethod = (*env)->GetStaticMethodID(env, inputConstantsClass, "setModifiers", "(I)V");
+    if (!setModifiersMethod) {
+        if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
+        (*env)->DeleteLocalRef(env, inputConstantsClass);
+        return;
+    }
+    (*env)->CallStaticVoidMethod(env, inputConstantsClass, setModifiersMethod, (jint)mods);
+    if ((*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionClear(env);
+    }
+    (*env)->DeleteLocalRef(env, inputConstantsClass);
+}
+
+// JNI wrapper：供 Java 端 CallbackBridge.nativeSetModifiers(int) 调用
+JNIEXPORT void JNICALL Java_org_lwjgl_glfw_CallbackBridge_nativeSetModifiers(JNIEnv* env, jclass clazz, jint mods) {
+    CallbackBridge_syncModifiersToMC(mods);
 }
 
 BOOL CallbackBridge_nativeSendChar(jchar codepoint /* jint codepoint */) {
@@ -503,13 +560,20 @@ char getKeyModifiers(int key, int action) {
     char mod;
     switch (key) {
         case GLFW_KEY_LEFT_SHIFT:
+        case GLFW_KEY_RIGHT_SHIFT:
             mod = GLFW_MOD_SHIFT;
             break;
         case GLFW_KEY_LEFT_CONTROL:
+        case GLFW_KEY_RIGHT_CONTROL:
             mod = GLFW_MOD_CONTROL;
             break;
         case GLFW_KEY_LEFT_ALT:
+        case GLFW_KEY_RIGHT_ALT:
             mod = GLFW_MOD_ALT;
+            break;
+        case GLFW_KEY_LEFT_SUPER:
+        case GLFW_KEY_RIGHT_SUPER:
+            mod = GLFW_MOD_SUPER;
             break;
         case GLFW_KEY_CAPS_LOCK:
             mod = GLFW_MOD_CAPS_LOCK;

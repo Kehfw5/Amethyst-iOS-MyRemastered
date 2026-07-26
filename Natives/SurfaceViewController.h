@@ -28,6 +28,9 @@ CGPoint lastVirtualMousePoint;
 
 + (GameSurfaceView *)surface;
 + (BOOL)isRunning;
+// 获取当前显示的 SurfaceViewController 实例
+// 支持作为 rootViewController 或以模态方式呈现两种情况
++ (instancetype)currentInstance;
 
 // LogView category
 @property(nonatomic) PLLogOutputView* logOutputView;
@@ -36,6 +39,7 @@ CGPoint lastVirtualMousePoint;
 @property(nonatomic) NSArray *menuArray;
 @property(nonatomic) UITableView *menuView;
 @property(nonatomic) UIScreenEdgePanGestureRecognizer* edgeGesture;
+@property(nonatomic) UIView *gameMenuOverlay; // FCL 风格悬浮按钮 + FPS/内存显示
 
 @end
 
@@ -54,5 +58,11 @@ CGPoint lastVirtualMousePoint;
 - (void)actionOpenNavigationMenu;
 - (void)didSelectMenuItem:(int)item;
 - (void)viewWillTransitionToSize_Navigation:(CGRect)frame;
+// FCL 风格游戏内菜单动作
+- (void)actionToggleControls;        // 隐藏/显示控制按钮
+- (void)actionToggleVirtualMouse;    // 虚拟鼠标开关
+- (void)actionToggleKeyboard;        // 游戏内键盘开关
+- (void)actionAdjustResolution;      // 分辨率调整
+- (void)actionOpenMultiplayer;       // 联机（ZeroTier）
 
 @end

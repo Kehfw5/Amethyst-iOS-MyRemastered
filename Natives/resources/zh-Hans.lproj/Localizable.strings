@@ -7,6 +7,13 @@
 "game.menu.confirm.force_close" = "确认强制关闭？";
 "game.menu.log_output" = "日志输出";
 "game.menu.custom_controls" = "按键布局";
+"game.menu.multiplayer" = "联机";
+"game.menu.toggle_stats" = "开关 FPS/内存显示";
+"game.menu.toggle_controls" = "隐藏/显示控制按钮";
+"game.menu.toggle_virtual_mouse" = "虚拟鼠标开关";
+"game.menu.toggle_keyboard" = "游戏内键盘开关";
+"game.menu.resolution" = "分辨率调整";
+"game.menu.resolution.message" = "选择游戏分辨率缩放比例";
 
 "game.note.airplay" = "Minecraft 正在通过隔空播放（AirPlay）到其他设备显示";
 
@@ -49,6 +56,10 @@
 "custom_controls.button_edit.corner_radius" = "圆角半径 (%)";
 "custom_controls.button_edit.opacity" = "不透明度 (%)：";
 "custom_controls.button_edit.visibility" = "可见性";
+"custom_controls.button_edit.section.basic" = "基础";
+"custom_controls.button_edit.section.input" = "输入";
+"custom_controls.button_edit.section.behavior" = "行为";
+"custom_controls.button_edit.section.appearance" = "外观";
 
 "custom_controls.button_menu.add_subbutton" = "添加子按钮";
 "custom_controls.control_menu.discard_changes" = "取消更改";
@@ -149,12 +160,16 @@
 "preference.detail.news_url" = "设置新闻页面的网址";
 "preference.title.reset_news_url" = "恢复默认新闻网址";
 "preference.detail.reset_news_url" = "将新闻网址重置为默认值";
+"preference.title.view_analytics_stats" = "使用统计";
+"preference.detail.view_analytics_stats" = "查看启动器的使用统计数据";
 "Profiles" = "实例";
 "Settings" = "设置";
 
 "preference.section.general" = "启动器设置";
 "preference.section.video" = "视频设置";
 "preference.section.footer.video" = "自动渲染器允许 Amethyst 选择基于 Minecraft 版本的最佳选项。减少分辨率降低 GPU 工作量以提高性能。";
+"preference.section.mobileglues" = "MobileGlues 渲染器";
+"preference.section.footer.mobileglues" = "这些设置在渲染器选择为 MobileGlues 或 Vulkan 时生效。Vulkan 渲染器的 OpenGL 回退使用 MobileGlues（对齐 Ynnyny 仓库），config.json 会被读取。Auto 渲染器会被解析为 ANGLE，不会加载 MobileGlues，设置不生效。配置将在游戏启动时写入 <POJAV_HOME>/MG/config.json。";
 "preference.section.control" = "自定义控制键";
 "preference.section.debug" = "UI设置";
 "preference.section.footer.debug" = "除了调试外，这些设置可能对自定义控件有用。您可能需要重新启动启动器才能使更改生效。";
@@ -176,6 +191,10 @@
 "preference.detail.download_source" = "选择游戏资源下载源。BMCLAPI镜像源提供更快的国内下载速度。";
 "preference.title.download_source-official" = "官方源";
 "preference.title.download_source-bmclapi" = "BMCLAPI镜像源";
+"preference.title.mod_mirror" = "模组镜像源";
+"preference.detail.mod_mirror" = "选择模组/光影/资源包/数据包/整合包/世界的 API 与文件下载镜像源。MCIM镜像源（mod.mcimirror.top）提供国内加速，兼容 Modrinth 和 CurseForge 接口。";
+"preference.title.mod_mirror-official" = "官方源";
+"preference.title.mod_mirror-mcim" = "MCIM镜像源";
 "preference.title.debug_logging" = "调试日志";
 "preference.detail.debug_logging" = "完整的记录启动器的各种活动事件到latestlog.txt文件内,有助于开发者更容易的发现错误。但Minecraft游戏内FPS可能会降低(频繁的记录日志内容会使得CPU负载变高)";
 "preference.title.jitstreamer_server" = "JitStreamer的服务器地址";
@@ -211,14 +230,18 @@
 "preference.title.renderer.debug.auto" = "自动：gl4es或MobileGlues";
 "preference.title.renderer.debug.gl4es" = "holy gl4es 1.1.4 - OpenGL版本2.1";
 "preference.title.renderer.debug.angle" = "ANGLE（仅支持1.17+）- OpenGL 版本 3.2";
-"preference.title.renderer.debug.zink" = "Zink（Mesa 21.0）- OpenGL 版本 4.1";
+"preference.title.renderer.debug.mg" = "MobileGlues（1.17+）- OpenGL 版本 4.0，实验性";
+"preference.title.renderer.debug.zink" = "Zink（Mesa 25.0.7）- OpenGL 版本 4.1";
+"preference.title.renderer.debug.ltw" = "LTW - OpenGL Core→ES 转译（1.17+）";
+"preference.title.renderer.debug.vulkan" = "MoltenVK（26.2+）- 导出 Vulkan 1.4";
 
 "preference.detail.renderer" = "更改使用的 OpenGL 渲染器";
 
 "preference.title.resolution" = "分辨率缩放 (%)";
 "preference.detail.resolution" = "降低分辨率会影响游戏内 UI 大小，也可能会提升FPS。默认分辨率为屏幕的分辨率，此功能可能不适用于新版 Minecraft。";
-"preference.title.max_framerate" = "最大帧率";
-"preference.detail.max_framerate" = "允许您在 ProMotion 显示器上将游戏帧率限制为 60FPS。";
+
+"preference.title.disable_game_vsync" = "解锁帧率（关闭垂直同步）";
+"preference.detail.disable_game_vsync" = "Minecraft 默认开启垂直同步，会把帧率锁在屏幕刷新率（60Hz 锁 60、120Hz 锁 120）。开启后启动器会强制关闭垂直同步，让游戏帧率可超过屏幕刷新率。如需省电降温或偏好垂直同步可关闭。";
 
 "preference.title.performance_hud" = "显示性能 HUD";
 "preference.detail.performance_hud" = "当可用时显示性能监控覆盖层。该功能仅支持 iOS 16 及以上系统和 Angle 渲染器。";
@@ -231,6 +254,46 @@
 "preference.detail.silence_with_switch" = "启用时，可以使用静音模式禁用音频，耳机和外部扬声器不受此影响。";
 "preference.title.allow_microphone" = "允许麦克风输入";
 "preference.detail.allow_microphone" = "仅当您使用 VoiceChat Mod 时启用此项。静音开关将被忽略，并且会影响其他应用的音频质量。";
+
+/* MobileGlues 设置 */
+"preference.title.enable_angle" = "ANGLE ES 驱动";
+"preference.detail.enable_angle" = "使用 ANGLE 作为 OpenGL ES 驱动，而非系统驱动。在某些设备上可能改善兼容性。";
+"preference.title.enable_no_error" = "GL No Error";
+"preference.detail.enable_no_error" = "控制 GL_NO_ERROR 行为。0=默认，1=始终无错误，2=从不。";
+"preference.title.mg_enable_no_error-0" = "默认";
+"preference.title.mg_enable_no_error-1" = "始终无错误";
+"preference.title.mg_enable_no_error-2" = "从不";
+"preference.title.enable_ext_timer_query" = "EXT 计时器查询";
+"preference.detail.enable_ext_timer_query" = "启用 GL_EXT_disjoint_timer_query 扩展，用于 GPU 计时查询。";
+"preference.title.enable_ext_compute_shader" = "EXT 计算着色器";
+"preference.detail.enable_ext_compute_shader" = "启用计算着色器扩展。可能破坏部分着色器。";
+"preference.title.enable_ext_direct_state_access" = "EXT 直接状态访问";
+"preference.detail.enable_ext_direct_state_access" = "启用直接状态访问扩展，更安全地操作 GL 对象。";
+"preference.title.max_glsl_cache_size" = "GLSL 缓存大小";
+"preference.detail.max_glsl_cache_size" = "已编译 GLSL 着色器的最大缓存数量。0 表示禁用缓存。";
+"preference.title.multidraw_mode" = "多重绘制模式";
+"preference.detail.multidraw_mode" = "多重间接绘制渲染模式，提升 draw call 性能。";
+"preference.title.mg_multidraw_mode-0" = "自动";
+"preference.title.mg_multidraw_mode-1" = "间接";
+"preference.title.mg_multidraw_mode-2" = "模拟";
+"preference.title.angle_depth_clear_fix_mode" = "ANGLE 深度清除修复";
+"preference.detail.angle_depth_clear_fix_mode" = "针对使用 ANGLE ES 驱动时深度缓冲清除问题的修复方案。";
+"preference.title.custom_gl_version" = "自定义 OpenGL 版本";
+"preference.detail.custom_gl_version" = "覆盖上报的 OpenGL 版本。用于兼容需要特定 GL 版本的 Mod。";
+"preference.title.mg_custom_gl_version-0" = "默认";
+"preference.title.mg_custom_gl_version-4.0" = "OpenGL 4.0";
+"preference.title.mg_custom_gl_version-4.1" = "OpenGL 4.1";
+"preference.title.mg_custom_gl_version-4.2" = "OpenGL 4.2";
+"preference.title.mg_custom_gl_version-4.3" = "OpenGL 4.3";
+"preference.title.mg_custom_gl_version-4.4" = "OpenGL 4.4";
+"preference.title.mg_custom_gl_version-4.5" = "OpenGL 4.5";
+"preference.title.mg_custom_gl_version-4.6" = "OpenGL 4.6";
+"preference.title.fsr1_setting" = "FSR 1.0 超分辨率";
+"preference.detail.fsr1_setting" = "AMD FidelityFX Super Resolution 1.0 超分辨率质量。在低分辨率下提升性能。";
+"preference.title.mg_fsr1_setting-0" = "关闭";
+"preference.title.mg_fsr1_setting-1" = "超高品质";
+"preference.title.mg_fsr1_setting-2" = "高品质";
+"preference.title.mg_fsr1_setting-3" = "性能优先";
 "preference.title.default_gamepad_ctrl" = "手柄配置";
 "preference.title.hardware_hide" = "硬件连接时隐藏控制键";
 "preference.detail.hardware_hide" = "启用连接鼠标或游戏控制器时自动禁用屏幕控制叠加的行为。";
@@ -297,6 +360,76 @@
 "preference.detail.debug_skip_wait_jit" = "这并不是让您在没有 JIT 的情况下启动，而是跳过调试检查，因为在越狱设备上会检查失败。";
 "preference.title.debug_ipad_ui" = "使用 iPadOS 界面";
 "preference.detail.debug_ipad_ui" = "开启后会使用 iPad OS 的专用界面，否则使用 iPhone 的界面。";
+
+"ai.fix.dash_title" = "AI 修复诊断工作台";
+"ai.fix.dash_subtitle" = "先分析，再修复，所有高风险操作都将等待确认";
+"ai.fix.tile.analyze" = "分析";
+"ai.fix.tile.analyze_value" = "日志与配置";
+"ai.fix.tile.analyze_sub" = "读取崩溃日志";
+"ai.fix.tile.plan" = "计划";
+"ai.fix.tile.plan_value" = "逐步修复";
+"ai.fix.tile.plan_sub" = "生成最小风险方案";
+"ai.fix.tile.safe" = "安全";
+"ai.fix.tile.safe_value" = "人工确认";
+"ai.fix.tile.safe_sub" = "危险操作需确认";
+"ai.fix.history.title" = "修复历史";
+"ai.fix.history.sessions" = "会话";
+"ai.fix.history.sessions_value" = "自动记录";
+"ai.fix.history.sessions_sub" = "每次修复可回看";
+"ai.fix.history.rollback" = "回滚";
+"ai.fix.history.rollback_value" = "一键撤销";
+"ai.fix.history.rollback_sub" = "保留修改痕迹";
+"ai.fix.risk.title" = "风险提示";
+"ai.fix.risk.backup" = "修改前已备份";
+"ai.fix.risk.backup_sub" = "关键文件会尽量保留恢复依据";
+"ai.fix.risk.confirm" = "高风险操作需确认";
+"ai.fix.risk.confirm_sub" = "删除、重命名、Mod 操作不会静默执行";
+"ai.fix.risk.verify" = "修复后需手动验证";
+"ai.fix.risk.verify_sub" = "请重新启动游戏确认实际效果";
+"ai.fix.input_title" = "指令与补充信息";
+"ai.fix.input_placeholder" = "描述现象、补充信息或直接开始对话...";
+"ai.fix.stop" = "停止";
+"ai.fix.send" = "发送";
+"ai.fix.exit" = "退出启动器";
+"ai.fix.restart" = "重启启动器";
+"ai.fix.model_config" = "模型配置";
+"ai.fix.config_subtitle" = "可对接兼容 OpenAI 的 API 服务";
+"ai.fix.start_fix" = "开始修复";
+"ai.fix.model_name" = "模型名";
+"ai.fix.save" = "保存";
+"ai.fix.tool_requests" = "工具请求";
+"ai.fix.tool_subtitle" = "高风险操作会在这里等待您的确认";
+"ai.fix.ready" = "准备就绪";
+"ai.fix.ready_subtitle" = "等待输入或开始自动分析";
+"ai.fix.config_saved" = "配置已保存";
+"ai.fix.configured" = "已配置";
+"ai.fix.not_configured" = "未配置";
+"ai.fix.running" = "运行中";
+"ai.fix.experimental_title" = "实验性功能";
+"ai.fix.experimental_message" = "AI 崩溃修复功能为实验性功能，可能较为不稳定。在使用前请确保已做好备份工作。是否继续？";
+"ai.fix.continue" = "继续";
+"ai.fix.cancel" = "取消";
+"ai.fix.please_configure" = "请先完成 API 配置后点击“保存”按钮。";
+"ai.fix.settings_mode" = "您已进入 AI 修复设置界面。请点击“开始修复”按钮启动诊断，或直接发送补充信息。";
+"ai.fix.starting" = "正在启动 AI 修复流程...";
+"ai.fix.start_failed" = "启动失败";
+"ai.fix.tool_success" = "%@ 执行成功";
+"ai.fix.tool_failed" = "执行失败";
+"ai.fix.error" = "错误";
+"ai.fix.completed" = "修复完成！";
+"ai.fix.modifications" = "共修改了 %lu 个文件";
+"ai.fix.restart_hint" = "修复流程已结束。请手动重新启动游戏进行验证：1) 关闭当前游戏实例；2) 返回启动器并重新进入对应配置；3) 正常启动游戏并复现原场景；4) 若问题仍存在，可继续反馈日志或使用撤销修改。";
+"ai.fix.waiting_confirm" = "等待确认";
+"ai.fix.waiting_subtitle" = "当前操作需要您确认后才会执行";
+"ai.fix.executing" = "执行工具中...";
+"ai.fix.executing_subtitle" = "正在执行受控修复步骤";
+"ai.fix.completed_subtitle" = "请重新启动游戏验证修复结果";
+"ai.fix.error_subtitle" = "可以导出报告或回滚最近修改";
+"ai.fix.stopped" = "已停止";
+"ai.fix.stopped_subtitle" = "会话已终止，您可以重新开始";
+"ai.fix.stopped_by_user" = "已停止修复";
+"ai.fix.approve" = "同意";
+"ai.fix.reject" = "拒绝";
 "preference.title.debug_auto_correction" = "自动校正";
 "preference.detail.debug_auto_correction" = "在游戏中输入文本时启用自动校正。";
 "preference.title.debug_hide_home_indicator" = "隐藏主屏幕指示键";
@@ -376,6 +509,9 @@
 "preference.title.mod_touch_enable" = "启用 TouchController 支持";
 "preference.detail.mod_touch_enable" = "启用 TouchController 模组支持。注意：开启此项将禁用“可滑动快捷栏”。";
 
+"preference.title.custom_controls" = "键位调整";
+"preference.detail.custom_controls" = "自定义游戏控制布局，拖拽按钮位置和大小";
+
 
 
 "preference.popup.touch_info.title" = "TouchController 适配说明";
@@ -416,3 +552,157 @@
 "preference.touchcontroller.moveview.enable" = "启用移动视角";
 
 "spdt" = "我是个飞机!!!!!!";
+
+// Crash View
+"crash.title" = "游戏意外退出";
+"crash.subtitle" = "检测到错误，游戏进程已终止";
+"crash.exit_code" = "退出代码";
+"crash.reason" = "可能原因";
+"crash.reason.normal" = "游戏正常退出";
+"crash.reason.java_exception" = "Java 虚拟机遇到未捕获的异常";
+"crash.reason.memory" = "内存不足，进程被系统终止 (OOM)";
+"crash.reason.segmentation" = "段错误，可能是 JNI 调用或原生库问题";
+"crash.reason.abort" = "程序异常终止 (abort)";
+"crash.reason.terminated" = "进程被外部信号终止";
+"crash.reason.unknown" = "未知错误 (代码: %d)";
+"crash.suggestion" = "建议操作";
+"crash.suggestion.oom" = "iOS 内存限制导致崩溃，建议使用 GetMoreRam (LiveContainer) 解除内存限制后重试";
+"crash.view_log" = "查看日志详情";
+"crash.share_log" = "分享日志";
+"crash.full_log" = "查看完整日志";
+"crash.return_launcher" = "退出启动器";
+"crash.restart_launcher" = "重启启动器";
+"crash.log_unavailable" = "无法读取日志文件";
+"crash.interface_title" = "崩溃界面";
+"crash.log_info" = "日志信息";
+"crash.error_title" = "游戏因出现致命错误而崩溃";
+"crash.error_code" = "错误代码：";
+"crash.possible_reason" = "可能的原因：";
+"crash.debug_reference" = "参考 debug 文档";
+"crash.github_issue" = "前往 GitHub Issues 提交问题";
+"crash.ai_solve" = "使用 AI 解决问题";
+"crash.ai_solve_experimental" = "使用 AI 解决问题";
+"crash.experimental" = "实验性";
+"crash.quick_fix" = "快速修复建议";
+"crash.reason.mod_conflict" = "Mod 冲突导致崩溃（NoSuchMethodError/ClassCastException 等）";
+"crash.reason.missing_library" = "缺失游戏库文件（UnsatisfiedLinkError/NoClassDefFoundError）";
+"crash.reason.java_version" = "Java 版本不匹配（UnsupportedClassVersionError）";
+"crash.reason.renderer" = "渲染器错误（OpenGL/Metal/EGL 初始化失败）";
+"crash.reason.mod_loading" = "Mod 加载失败（Forge/Fabric/OptiFine 加载错误）";
+// 快速修复建议文案
+"crash.suggestion.oom_ram" = "降低内存分配（建议 1024-2048MB）";
+"crash.suggestion.oom_getmoream" = "使用 GetMoreRam (LiveContainer) 解除 iOS 内存限制";
+"crash.suggestion.oom_mods" = "移除重量级 Mod（如光影、高清材质）";
+"crash.suggestion.oom_restart" = "重启启动器后重试（释放内存碎片）";
+"crash.suggestion.segfault_renderer" = "尝试切换渲染器（gl4es / MetalGlues / virgil）";
+"crash.suggestion.segfault_jit" = "确保 JIT 已启用（TrollStore/SideStore + JIT 权限）";
+"crash.suggestion.segfault_restart" = "重启启动器后重试";
+"crash.suggestion.abort_mods" = "检查 Mod 是否兼容（移除最近添加的 Mod）";
+"crash.suggestion.abort_renderer" = "尝试切换渲染器";
+"crash.suggestion.abort_restart" = "重启启动器后重试";
+"crash.suggestion.modconflict_remove" = "移除最近添加的 Mod";
+"crash.suggestion.modconflict_check" = "检查 Mod 版本兼容性（Forge/Fabric/API 版本）";
+"crash.suggestion.modconflict_log" = "查看完整日志定位冲突 Mod";
+"crash.suggestion.missinglib_reinstall" = "重新安装当前游戏版本";
+"crash.suggestion.missinglib_check" = "检查实例目录中的 libraries 文件夹是否完整";
+"crash.suggestion.missinglib_network" = "检查网络连接，确保下载源可访问";
+"crash.suggestion.javaver_change" = "在设置中切换 Java 版本（8/17/21）";
+"crash.suggestion.javaver_check" = "检查游戏版本要求的 Java 版本";
+"crash.suggestion.renderer_switch" = "尝试切换渲染器：gl4es / MetalGlues / virgil";
+"crash.suggestion.renderer_shader" = "禁用光影包后重试";
+"crash.suggestion.renderer_resolution" = "降低游戏分辨率缩放比例";
+"crash.suggestion.modload_remove" = "移除问题 Mod（查看日志中的错误行）";
+"crash.suggestion.modload_update" = "更新 Mod 加载器（Forge/Fabric/OptiFine）";
+"crash.suggestion.modload_version" = "检查 Mod 是否支持当前 MC 版本";
+"crash.suggestion.java_log" = "查看完整日志定位异常堆栈";
+"crash.suggestion.java_mods" = "检查 Mod 是否兼容（移除最近添加的 Mod）";
+"crash.suggestion.java_restart" = "重启启动器后重试";
+
+// 启动加载界面（参照 FCL/ZL2 风格）
+"launch.title" = "正在启动 Minecraft";
+"launch.stage.init_env" = "正在初始化运行环境...";
+"launch.stage.verify_files" = "正在校验游戏文件完整性...";
+"launch.stage.load_jre" = "正在加载 Java 运行时...";
+"launch.stage.config_jvm" = "正在配置 JVM 参数...";
+"launch.stage.start_jvm" = "正在启动 Java 虚拟机...";
+"launch.stage.load_libs" = "正在加载游戏库...";
+"launch.stage.init_mc" = "正在初始化 Minecraft...";
+"launch.stage.load_assets" = "正在加载资源文件...";
+"launch.stage.entering" = "即将进入游戏...";
+"launch.stage.preparing" = "正在准备...";
+"launch.elapsed" = "已耗时 0秒";
+"launch.elapsed_seconds" = "已耗时 %.0f秒";
+"launch.elapsed_minutes" = "已耗时 %.0f分%.0f秒";
+"launch.complete" = "启动完成！";
+"launch.total_seconds" = "总耗时 %.1f秒";
+"launch.total_minutes" = "总耗时 %.0f分%.0f秒";
+"launch.cancel" = "取消启动";
+"launch.cancel_confirm_title" = "确认取消启动？";
+"launch.cancel_confirm_message" = "取消启动将终止当前的游戏加载流程并返回启动器。";
+"launch.cancel_confirm_yes" = "确认取消";
+"launch.cancel_confirm_no" = "继续等待";
+
+// AI Fix Feature
+"ai.fix.conversation" = "对话窗口";
+"ai.fix.input_placeholder" = "说点什么...";
+"ai.fix.send" = "发送";
+"ai.fix.stop" = "停止";
+"ai.fix.exit" = "退出启动器";
+"ai.fix.restart" = "重启启动器";
+"ai.fix.model_config" = "模型配置";
+"ai.fix.model_name" = "模型名";
+"ai.fix.save" = "保存";
+"ai.fix.running" = "运行中";
+"ai.fix.configured" = "已配置";
+"ai.fix.not_configured" = "未配置";
+"ai.fix.config_saved" = "配置已保存";
+"ai.fix.tool_requests" = "工具请求";
+"ai.fix.ready" = "准备就绪";
+"ai.fix.thinking" = "AI 思考中...";
+"ai.fix.waiting_confirm" = "等待确认";
+"ai.fix.executing" = "执行工具中...";
+"ai.fix.completed" = "已完成";
+"ai.fix.error" = "出错";
+"ai.fix.stopped" = "已停止";
+"ai.fix.approve" = "同意";
+"ai.fix.reject" = "拒绝";
+"ai.fix.experimental_title" = "实验性功能";
+"ai.fix.experimental_message" = "AI 崩溃修复功能为实验性功能，可能较为不稳定。在使用前请确保已做好备份工作。是否继续？";
+"ai.fix.continue" = "继续";
+"ai.fix.cancel" = "取消";
+"ai.fix.please_configure" = "请先完成 API 配置后点击\"保存\"按钮。";
+"ai.fix.settings_mode" = "您已进入 AI 修复设置界面。配置完成后，点击发送按钮开始对话。";
+"ai.fix.starting" = "正在启动 AI 修复流程...";
+"ai.fix.start_failed" = "启动失败";
+"ai.fix.stopped_by_user" = "已停止修复";
+"ai.fix.tool_success" = "%@ 执行成功";
+"ai.fix.tool_failed" = "执行失败";
+"ai.fix.modifications" = "共修改了 %lu 个文件";
+"ai.fix.restart_hint" = "请重新启动游戏验证修复效果。如果问题仍未解决，可以继续对话或前往 GitHub 提交 Issue。";
+
+"preference.title.ai_crash_fix" = "AI 崩溃修复";
+"preference.detail.ai_crash_fix" = "配置并使用 AI 助手自动诊断和修复游戏崩溃问题";
+"preference.title.memory_limit_help" = "内存限制说明";
+"preference.detail.memory_limit_help" = "了解 iOS 内存限制导致整合包闪退的原因及解决方法（GetMoreRam）";
+"preference.title.check_update" = "检查更新";
+"preference.detail.check_update" = "检查 GitHub Releases 上是否有最新正式版";
+
+// 检查更新
+"check_update" = "检查更新";
+"check_update.checking" = "正在检查更新…";
+"check_update.failed" = "检查更新失败";
+"check_update.up_to_date" = "已是最新版本";
+"check_update.current_version" = "当前版本 %@，已是最新正式版。";
+"check_update.new_version_title" = "发现新版本 v%@";
+"check_update.new_version_message" = "点击「前往下载」打开 GitHub Releases 页面下载最新版本。";
+"check_update.download" = "前往下载";
+
+// Minecraft 新闻（参考 PCL-CE）
+"mc_news.title" = "Minecraft 新闻";
+"mc_news.read_more" = "查看详情";
+"mc_news.retry" = "重试";
+"mc_news.load_failed" = "加载失败";
+
+// 内存限制帮助弹窗
+"mem_help.title" = "关于内存限制";
+"mem_help.message" = "iOS 18 / iOS 26 单实例内存上限约为 1440MB，玩大型整合包时可能因内存不足崩溃。\n\n解决方法：\n使用 GetMoreRam (LiveContainer 插件) 解除内存限制。\nGetMoreRam 仓库：github.com/hugeBlack/GetMoreRam\n\n安装后重启启动器即可生效。\n\n如果不使用 LiveContainer，可尝试降低内存分配（设置 > Java > 内存分配），但部分整合包在内存限制下可能无法正常运行。";

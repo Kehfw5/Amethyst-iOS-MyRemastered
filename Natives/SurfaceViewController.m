@@ -16,15 +16,22 @@
 #import "MinecraftResourceUtils.h"
 #import "PLProfiles.h"
 #import "SurfaceViewController.h"
+#import "utils.h"
+#import "GameMenuOverlayView.h"
 #import "TrackedTextField.h"
 #import "TouchControllerBridge.h"
 #import "UIKit+hook.h"
 #import "ios_uikit_bridge.h"
+#import "LanPortDetector.h"
+#import "BackgroundManager.h"
+#import "MultiplayerManager.h"
 
 #include "glfw_keycodes.h"
 #include "utils.h"
 
 #include <dlfcn.h>
+#include <mach/mach.h>
+#include <mach/task_info.h>
 
 // --- [START] TouchController Mod Support ---
 #include <arpa/inet.h>
@@ -103,7 +110,7 @@
     
     size_t length = (type == 2) ? 8 : 16;
 
-    // 优化重试机制：减少重试次数，避免不必要的延迟
+    // ä¼åéè¯æºå¶ï¼åå°éè¯æ¬¡æ°ï¼é¿åä¸å¿è¦çå»¶è¿
     int maxRetries = (type == 2) ? 2 : 1;
     int retry;
     ssize_t sent = -1;
@@ -111,23 +118,23 @@
     for (retry = 0; retry < maxRetries; retry++) {
         sent = sendto(_sock, &packet, length, 0, (struct sockaddr *)&_target, sizeof(_target));
         if (sent == length) {
-            // 发送成功
+            // åéæå
             break;
         } else if (sent < 0) {
             int err = errno;
             if (err == EAGAIN || err == EWOULDBLOCK) {
-                // 缓冲区满，短暂休眠后重试
-                usleep(500); // 减少休眠时间到0.5毫秒
+                // ç¼å²åºæ»¡ï¼ç­æä¼ç åéè¯
+                usleep(500); // åå°ä¼ç æ¶é´å°0.5æ¯«ç§
                 continue;
             } else {
-                // 其他错误，记录并退出重试
+                // å¶ä»éè¯¯ï¼è®°å½å¹¶éåºéè¯
                 NSLog(@"[TouchController] Error: sendto failed: %s (type=%d, id=%d)", strerror(err), type, fingerId);
                 break;
             }
         } else {
-            // 部分发送（理论上不会发生），记录并重试
+            // é¨ååéï¼çè®ºä¸ä¸ä¼åçï¼ï¼è®°å½å¹¶éè¯
             NSLog(@"[TouchController] Warning: partial send: %zd of %zu bytes", sent, length);
-            usleep(500); // 减少休眠时间到0.5毫秒
+            usleep(500); // åå°ä¼ç æ¶é´å°0.5æ¯«ç§
         }
     }
 
@@ -137,18 +144,74 @@
 }
 @end
 
+#pragma mark - PLDisplayLinkTarget
+// CADisplayLink 回调 target 类
+//
+// 关键修复（Vulkan FPS 显示无效）：
+// 之前使用 [CADisplayLink displayLinkWithTarget:block selector:@selector(invoke)]
+// 传递 block，但 block 的 invoke 方法签名 -(void)invoke 与 CADisplayLink 期望的
+// -(void)selector:(CADisplayLink*)link 签名不匹配，导致回调不触发。
+// 此类提供正确签名的 displayLinkTick: 方法，确保 CADisplayLink 回调正确触发。
+@interface PLDisplayLinkTarget : NSObject
+@property(nonatomic, assign) BOOL isVulkanMode;  // 配置预期 Vulkan 路径（仅诊断日志用，实际决策由 pojavIsActualVulkanPath() 运行时判定）
+@property(nonatomic, assign) NSUInteger tickCount;  // 诊断用：累计 tick 次数
+@end
+
+@implementation PLDisplayLinkTarget
+
+- (instancetype)initWithVulkanMode:(BOOL)isVulkanMode {
+    self = [super init];
+    if (self) {
+        _isVulkanMode = isVulkanMode;
+        _tickCount = 0;
+    }
+    return self;
+}
+
+// CADisplayLink 回调方法（正确签名：带 CADisplayLink* 参数）
+//
+// 关键修复（Vulkan/MoltenVK+OpenGL FPS 显示错误）：
+// 之前用 viewDidLoad 时的静态字符串推断（isVulkanMode）决定是否递增 FPS 计数器，
+// 但 graphicsApi=default 由 MC 内部决定，无法预判；且 MC 实际选择可能与配置不符。
+// 现在每帧动态查询 pojavIsActualVulkanPath()（读 clientAPI == GLFW_NO_API），
+// 与 MC 真实渲染路径一致，避免：
+//   - 双重计数：Vulkan 渲染器但 MC 选 GL 路径，pojavSwapBuffers + displayLink 都计数
+//   - 漏计数：graphicsApi=prefer_opengl 但 MC 走 Vulkan，displayLink 未启用 fallback
+- (void)displayLinkTick:(CADisplayLink *)link {
+    [GyroInput tick];
+    [ControllerInput tick];
+    // 动态判定：仅当 MC 真实走 Vulkan 路径时才递增 FPS 计数器
+    BOOL actualVulkanPath = pojavIsActualVulkanPath();
+    if (actualVulkanPath) {
+        pojavIncrementFpsCounter();
+    }
+    _tickCount++;
+    // 诊断日志：前 5 次回调 + 状态切换时输出，便于追踪 clientAPI 变化
+    static BOOL s_lastActualVulkanPath = NO;
+    BOOL stateChanged = (s_lastActualVulkanPath != actualVulkanPath);
+    if (_tickCount <= 5 || stateChanged) {
+        NSLog(@"[PLDisplayLinkTarget] displayLinkTick #%lu (configuredVulkan=%d, actualVulkanPath=%d, stateChanged=%d)",
+              (unsigned long)_tickCount, _isVulkanMode, actualVulkanPath, stateChanged);
+        s_lastActualVulkanPath = actualVulkanPath;
+    }
+}
+
+@end
+
 // --- [START] TouchController Static Library Support ---
-// ProxyMessage 类型定义 (参考 TouchController-iOSTest)
+// ProxyMessage ç±»åå®ä¹ (åè TouchController-iOSTest)
 #define PROXY_MESSAGE_TYPE_ADD_POINTER 1
 #define PROXY_MESSAGE_TYPE_REMOVE_POINTER 2
-#define PROXY_MESSAGE_TYPE_CLEAR_POINTER 3
 #define PROXY_MESSAGE_TYPE_VIBRATE 4
 #define PROXY_MESSAGE_TYPE_INPUT_STATUS 7
 #define PROXY_MESSAGE_TYPE_INPUT_CURSOR 9
 #define PROXY_MESSAGE_TYPE_INPUT_AREA 11
 #define PROXY_MESSAGE_TYPE_MOVE_VIEW 12
+#define PROXY_MESSAGE_TYPE_CAPABILITY 5
+#define PROXY_MESSAGE_TYPE_KEYBOARD_SHOW 8
+#define PROXY_MESSAGE_TYPE_INITIALIZE 10
 
-// Vibrate 类型
+// Vibrate ç±»å
 #define VIBRATE_KIND_BLOCK_BROKEN 0
 
 // --- [END] TouchController Static Library Support ---
@@ -162,6 +225,11 @@ static GameSurfaceView* pojavWindow;
 @interface SurfaceViewController ()<UITextFieldDelegate, UIGestureRecognizerDelegate> {
 }
 
+// FPS/内存监控相关（FPS 在 native pojavSwapBuffers 中计数，参照 FCL/ZL2）
+@property(nonatomic) NSTimer *statsTimer;                 // 低频定时器，1s 一次
+@property(nonatomic) CADisplayLink *statsDisplayLink;     // 渲染循环引用（用于 Gyro/Controller tick 和失效）
+@property(nonatomic, strong) id statsDisplayLinkTarget;   // CADisplayLink 的 target（强引用防释放）
+
 @property(nonatomic) NSDictionary* metadata;
 @property(nonatomic) TrackedTextField *inputTextField;
 @property(nonatomic) NSMutableArray* swipeableButtons;
@@ -170,9 +238,15 @@ static GameSurfaceView* pojavWindow;
 
 @property(nonatomic) UILongPressGestureRecognizer* longPressGesture, *longPressTwoGesture;
 @property(nonatomic) UITapGestureRecognizer *tapGesture, *doubleTapGesture;
+// TouchController 移动视角手势：右半区单指滑动
+@property(nonatomic) UIPanGestureRecognizer *moveViewPanGesture;
 
 @property(nonatomic) id mouseConnectCallback, mouseDisconnectCallback;
 @property(nonatomic) id controllerConnectCallback, controllerDisconnectCallback;
+// 关键修复（UI 累积异常）：MousePointerUpdated 块观察者之前未存储，
+// 无法在 dealloc 中移除，导致每次进出游戏都泄漏一个观察者 + 对 self 的强引用。
+// 现存为属性，dealloc 中统一移除。
+@property(nonatomic) id mousePointerUpdatedCallback;
 
 @property(nonatomic) CGFloat screenScale;
 @property(nonatomic) CGFloat mouseSpeed;
@@ -192,13 +266,43 @@ static GameSurfaceView* pojavWindow;
 @property(nonatomic, strong) UITextField *touchControllerTextField;
 @property(nonatomic) BOOL touchControllerTextInputEnabled;
 
+// 阶段13/16：启动遮罩层（参照 FCL/ZL2 的启动进度显示，JVM 启动到首帧渲染期间显示）
+//
+// 重要设计说明（参照 FCL/ZL2）：
+//   launchOverlayView 的 userInteractionEnabled 必须为 NO，使其不拦截触摸事件。
+//   这样视图层级下方的 gameMenuOverlay（悬浮球 + FPS 显示）在启动期间仍可
+//   被用户拖动和点击。这是 FCL/ZL2 的做法——启动遮罩层是纯视觉层，不参与
+//   交互。所有子控件（图标、进度条、文字）均为展示型，不需要接收触摸。
+//
+//   视图层级（从下到上）：
+//     rootView (游戏渲染表面)
+//       → menuView (底部弹出菜单)
+//         → menuDimView (菜单背景遮罩)
+//           → gameMenuOverlay (悬浮球 + FPS 显示) ← 需要可交互
+//             → launchOverlayView (启动遮罩层) ← userInteractionEnabled = NO
+//
+//   触摸事件流程：
+//     1. 用户触摸屏幕 → UIKit 从最顶层 view 开始 hitTest
+//     2. launchOverlayView.userInteractionEnabled = NO → hitTest 返回 nil
+//     3. 触摸穿透到 gameMenuOverlay
+//     4. gameMenuOverlay.hitTest 检查是否命中 menuButton/statsLabel
+//        - 命中 → 返回对应控件，用户可拖动/点击
+//        - 未命中 → 返回 nil，触摸继续穿透到游戏画面
+@property(nonatomic, strong) UIView *launchOverlayView;
+@property(nonatomic, strong) CAGradientLayer *launchGradientLayer;
+@property(nonatomic, strong) UIActivityIndicatorView *launchSpinner;
+@property(nonatomic, strong) UILabel *launchTitleLabel;
+@property(nonatomic, assign) NSTimeInterval launchStartTime;
+@property(nonatomic, assign) BOOL launchOverlayDismissed;
+@property(nonatomic, strong) UIButton *launchCancelButton;     // 取消启动按钮
+
 @end
 
 @implementation SurfaceViewController
 
 #pragma mark - TouchController Static Library Support
 
-// 启动 TouchController 消息接收循环
+// å¯å¨ TouchController æ¶æ¯æ¥æ¶å¾ªç¯
 - (void)startTouchControllerMessageLoop {
     __weak typeof(self) weakSelf = self;
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
@@ -212,25 +316,25 @@ static GameSurfaceView* pojavWindow;
                     [weakSelf processTouchControllerMessage:buffer];
                 }
 
-                // 休眠 16ms
+                // ä¼ç  16ms
                 usleep(16000);
             }
         }
     });
 }
 
-// 检查视图是否已关闭
+// æ£æ¥è§å¾æ¯å¦å·²å³é­
 - (BOOL)isViewDismissed {
     return !self.view.window || self.isBeingDismissed;
 }
 
-// 编码 ProxyMessage: AddPointerMessage (type=1, index=int32, x=float, y=float)
+// ç¼ç  ProxyMessage: AddPointerMessage (type=1, index=int32, x=float, y=float)
 - (NSData *)encodeAddPointerMessage:(int32_t)index x:(float)x y:(float)y {
     NSMutableData *data = [NSMutableData dataWithCapacity:16];
     int32_t type = htonl(PROXY_MESSAGE_TYPE_ADD_POINTER);
     int32_t indexBE = htonl(index);
 
-    // 将 float 转换为网络字节序
+    // å° float è½¬æ¢ä¸ºç½ç»å­èåº
     union { float f; uint32_t i; } ux, uy;
     ux.f = x;
     uy.f = y;
@@ -245,7 +349,7 @@ static GameSurfaceView* pojavWindow;
     return data;
 }
 
-// 编码 ProxyMessage: RemovePointerMessage (type=2, index=int32)
+// ç¼ç  ProxyMessage: RemovePointerMessage (type=2, index=int32)
 - (NSData *)encodeRemovePointerMessage:(int32_t)index {
     NSMutableData *data = [NSMutableData dataWithCapacity:8];
     int32_t type = htonl(PROXY_MESSAGE_TYPE_REMOVE_POINTER);
@@ -257,7 +361,7 @@ static GameSurfaceView* pojavWindow;
     return data;
 }
 
-// 发送 ProxyMessage 到 TouchController 静态库
+// åé ProxyMessage å° TouchController éæåº
 - (void)sendTouchControllerProxyMessage:(int32_t)index x:(float)x y:(float)y isRemove:(BOOL)isRemove {
     NSData *messageData;
 
@@ -274,7 +378,7 @@ static GameSurfaceView* pojavWindow;
 
 #pragma mark - TouchController Text Input Support
 
-// 编码 InputStatusMessage (type=7)
+// ç¼ç  InputStatusMessage (type=7)
 - (NSData *)encodeInputStatusMessageWithText:(NSString *)text
                               compositionStart:(int)compositionStart
                               compositionLength:(int)compositionLength
@@ -282,7 +386,7 @@ static GameSurfaceView* pojavWindow;
                               selectionLength:(int)selectionLength
                               selectionLeft:(BOOL)selectionLeft {
     if (!text) {
-        // 无数据，只发送 type + 0
+        // æ æ°æ®ï¼åªåé type + 0
         int32_t type = htonl(7);
         NSMutableData *data = [NSMutableData dataWithCapacity:1];
         [data appendBytes:&type length:4];
@@ -291,12 +395,12 @@ static GameSurfaceView* pojavWindow;
         return data;
     }
 
-    // 将 UTF-16 转换为 UTF-8
+    // å° UTF-16 è½¬æ¢ä¸º UTF-8
     NSData *textData = [text dataUsingEncoding:NSUTF8StringEncoding];
     const char *textBytes = (const char *)[textData bytes];
     int textLength = (int)[textData length];
 
-    // 计算 UTF-8 位置
+    // è®¡ç® UTF-8 ä½ç½®
     NSString *prefix = [text substringToIndex:compositionStart];
     NSData *prefixData = [prefix dataUsingEncoding:NSUTF8StringEncoding];
     int compositionStartUtf8 = (int)[prefixData length];
@@ -313,7 +417,7 @@ static GameSurfaceView* pojavWindow;
     NSData *selData = [selSegment dataUsingEncoding:NSUTF8StringEncoding];
     int selectionLengthUtf8 = (int)[selData length];
 
-    // 编码消息
+    // ç¼ç æ¶æ¯
     NSMutableData *data = [NSMutableData dataWithCapacity:5 + textLength + 17];
     int32_t type = htonl(7);
     [data appendBytes:&type length:4];
@@ -341,7 +445,7 @@ static GameSurfaceView* pojavWindow;
     return data;
 }
 
-// 编码 InputCursorMessage (type=9)
+// ç¼ç  InputCursorMessage (type=9)
 - (NSData *)encodeInputCursorMessageWithRect:(CGRect)rect {
     NSMutableData *data = [NSMutableData dataWithCapacity:17];
     int32_t type = htonl(9);
@@ -369,7 +473,7 @@ static GameSurfaceView* pojavWindow;
     return data;
 }
 
-// 编码 InputAreaMessage (type=11)
+// ç¼ç  InputAreaMessage (type=11)
 - (NSData *)encodeInputAreaMessageWithRect:(CGRect)rect {
     NSMutableData *data = [NSMutableData dataWithCapacity:17];
     int32_t type = htonl(11);
@@ -397,7 +501,7 @@ static GameSurfaceView* pojavWindow;
     return data;
 }
 
-// 发送文本输入状态到 TouchController
+// åéææ¬è¾å¥ç¶æå° TouchController
 - (void)sendTextInputStatus {
     if (self.touchControllerTransportHandle < 0) return;
 
@@ -418,7 +522,7 @@ static GameSurfaceView* pojavWindow;
     [TouchControllerBridge sendToTransport:self.touchControllerTransportHandle data:messageData];
 }
 
-// 发送光标位置信息
+// åéåæ ä½ç½®ä¿¡æ¯
 - (void)sendInputCursorWithRect:(CGRect)rect {
     if (self.touchControllerTransportHandle < 0) return;
 
@@ -426,7 +530,7 @@ static GameSurfaceView* pojavWindow;
     [TouchControllerBridge sendToTransport:self.touchControllerTransportHandle data:messageData];
 }
 
-// 发送输入区域信息
+// åéè¾å¥åºåä¿¡æ¯
 - (void)sendInputAreaWithRect:(CGRect)rect {
     if (self.touchControllerTransportHandle < 0) return;
 
@@ -436,7 +540,7 @@ static GameSurfaceView* pojavWindow;
 
 #pragma mark - TouchController Vibration Support
 
-// 编码 VibrateMessage (type=4)
+// ç¼ç  VibrateMessage (type=4)
 - (NSData *)encodeVibrateMessageWithKind:(int32_t)kind {
     NSMutableData *data = [NSMutableData dataWithCapacity:8];
     int32_t type = htonl(PROXY_MESSAGE_TYPE_VIBRATE);
@@ -448,28 +552,28 @@ static GameSurfaceView* pojavWindow;
     return data;
 }
 
-// 触发震动反馈
+// è§¦åéå¨åé¦
 - (void)triggerVibrationWithKind:(int32_t)kind {
-    // 检查震动是否启用
+    // æ£æ¥éå¨æ¯å¦å¯ç¨
     if (!getPrefBool(@"control.mod_touch_vibrate_enable")) {
         return;
     }
 
-    // 获取震动强度设置
+    // è·åéå¨å¼ºåº¦è®¾ç½®
     NSInteger intensity = [getPrefObject(@"control.mod_touch_vibrate_intensity") integerValue];
     if (intensity < 1) intensity = 1;
     if (intensity > 3) intensity = 3;
 
-    // 使用 UIImpactFeedbackGenerator 触发震动
+    // ä½¿ç¨ UIImpactFeedbackGenerator è§¦åéå¨
     UIImpactFeedbackGenerator *feedbackGenerator;
     switch (intensity) {
-        case 1: // 轻度震动
+        case 1: // è½»åº¦éå¨
             feedbackGenerator = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleLight];
             break;
-        case 2: // 中度震动
+        case 2: // ä¸­åº¦éå¨
             feedbackGenerator = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleMedium];
             break;
-        case 3: // 重度震动
+        case 3: // éåº¦éå¨
             feedbackGenerator = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleHeavy];
             break;
         default:
@@ -479,16 +583,65 @@ static GameSurfaceView* pojavWindow;
 
     [feedbackGenerator impactOccurred];
 
-    // 同时发送 VibrateMessage 到 TouchController
+    // åæ¶åé VibrateMessage å° TouchController
     if (self.touchControllerTransportHandle >= 0) {
         NSData *messageData = [self encodeVibrateMessageWithKind:kind];
         [TouchControllerBridge sendToTransport:self.touchControllerTransportHandle data:messageData];
     }
 }
 
+#pragma mark - TouchController Capability
+
+// 编码 CapabilityMessage (type=5)
+// 格式: 4B type (big endian) + 1B name_len + N B name (UTF-8) + 1B enabled (0/1)
+- (NSData *)encodeCapabilityMessageWithName:(NSString *)name enabled:(BOOL)enabled {
+    NSData *nameData = [name dataUsingEncoding:NSUTF8StringEncoding];
+    if (!nameData) {
+        NSLog(@"[TouchController] Failed to encode capability name as UTF-8: %@", name);
+        return nil;
+    }
+
+    uint8_t nameLen = (uint8_t)[nameData length];
+    int32_t type = htonl(PROXY_MESSAGE_TYPE_CAPABILITY);
+    uint8_t enabledByte = enabled ? 1 : 0;
+
+    NSMutableData *data = [NSMutableData dataWithCapacity:4 + 1 + nameLen + 1];
+    [data appendBytes:&type length:4];
+    [data appendBytes:&nameLen length:1];
+    [data appendBytes:[nameData bytes] length:nameLen];
+    [data appendBytes:&enabledByte length:1];
+
+    return data;
+}
+
+// 编码 InitializeMessage (type=10)
+// 供未来启动器主动初始化使用，当前未调用
+- (NSData *)encodeInitializeMessage {
+    int32_t type = htonl(PROXY_MESSAGE_TYPE_INITIALIZE);
+    return [NSData dataWithBytes:&type length:4];
+}
+
+// 在收到 InitializeMessage 后调用，向 Mod 声明启动器支持的能力
+- (void)sendCapabilities {
+    if (self.touchControllerTransportHandle < 0) {
+        NSLog(@"[TouchController] Cannot send capabilities: transport not initialized");
+        return;
+    }
+
+    // 发送 text_status 能力：声明启动器会通过 InputStatusMessage 上报文本编辑状态
+    NSData *textStatusCap = [self encodeCapabilityMessageWithName:@"text_status" enabled:YES];
+    [TouchControllerBridge sendToTransport:self.touchControllerTransportHandle data:textStatusCap];
+
+    // 发送 keyboard_show 能力：声明启动器会响应 KeyboardShowMessage 显示/隐藏键盘
+    NSData *keyboardShowCap = [self encodeCapabilityMessageWithName:@"keyboard_show" enabled:YES];
+    [TouchControllerBridge sendToTransport:self.touchControllerTransportHandle data:keyboardShowCap];
+
+    NSLog(@"[TouchController] Sent capabilities: text_status, keyboard_show");
+}
+
 #pragma mark - TouchController MoveView Support
 
-// 编码 MoveViewMessage (type=12)
+// ç¼ç  MoveViewMessage (type=12)
 - (NSData *)encodeMoveViewMessageWithScreenBased:(BOOL)screenBased
                                      deltaPitch:(float)deltaPitch
                                       deltaYaw:(float)deltaYaw {
@@ -496,7 +649,7 @@ static GameSurfaceView* pojavWindow;
     int32_t type = htonl(PROXY_MESSAGE_TYPE_MOVE_VIEW);
     uint8_t screenBasedByte = screenBased ? 1 : 0;
 
-    // 将 float 转换为网络字节序
+    // å° float è½¬æ¢ä¸ºç½ç»å­èåº
     union { float f; uint32_t i; } up, uy;
     up.f = deltaPitch;
     uy.f = deltaYaw;
@@ -511,7 +664,7 @@ static GameSurfaceView* pojavWindow;
     return data;
 }
 
-// 发送移动视角消息
+// åéç§»å¨è§è§æ¶æ¯
 - (void)sendMoveViewWithDeltaPitch:(float)deltaPitch deltaYaw:(float)deltaYaw {
     if (self.touchControllerTransportHandle >= 0) {
         NSData *messageData = [self encodeMoveViewMessageWithScreenBased:YES
@@ -523,7 +676,7 @@ static GameSurfaceView* pojavWindow;
 
 #pragma mark - TouchController Message Receiver
 
-// 处理从 TouchController 接收到的消息
+// å¤çä» TouchController æ¥æ¶å°çæ¶æ¯
 - (void)processTouchControllerMessage:(NSData *)messageData {
     if (messageData.length < 4) {
         NSLog(@"[TouchController] Message too short: %lu bytes", (unsigned long)messageData.length);
@@ -541,7 +694,7 @@ static GameSurfaceView* pojavWindow;
                 [messageData getBytes:&kind range:NSMakeRange(4, 4)];
                 kind = ntohl(kind);
                 
-                // 使用 dispatch_async 确保在主线程中调用
+                // ä½¿ç¨ dispatch_async ç¡®ä¿å¨ä¸»çº¿ç¨ä¸­è°ç¨
                 dispatch_async(dispatch_get_main_queue(), ^{
                     if (self.view && !self.isBeingDismissed) {
                         [self triggerVibrationWithKind:kind];
@@ -563,20 +716,135 @@ static GameSurfaceView* pojavWindow;
                 up.i = ntohl(pitchBE);
                 uy.i = ntohl(yawBE);
 
-                // MoveView 消息通常是从客户端发送到服务端的
-                // 这里我们记录日志，实际应用可能需要特殊处理
+                // MoveView æ¶æ¯éå¸¸æ¯ä»å®¢æ·ç«¯åéå°æå¡ç«¯ç
+                // è¿éæä»¬è®°å½æ¥å¿ï¼å®éåºç¨å¯è½éè¦ç¹æ®å¤ç
                 NSLog(@"[TouchController] Received MoveView: screenBased=%d, pitch=%.2f, yaw=%.2f",
                       screenBased, up.f, uy.f);
             }
             break;
         }
+        case PROXY_MESSAGE_TYPE_INITIALIZE: {
+            NSLog(@"[TouchController] Received InitializeMessage, sending capabilities");
+            dispatch_async(dispatch_get_main_queue(), ^{
+                if (self.view && !self.isBeingDismissed) {
+                    [self sendCapabilities];
+                }
+            });
+            break;
+        }
+        case PROXY_MESSAGE_TYPE_KEYBOARD_SHOW: {
+            if (messageData.length >= 5) {
+                uint8_t showByte;
+                [messageData getBytes:&showByte range:NSMakeRange(4, 1)];
+                BOOL show = (showByte != 0);
+                NSLog(@"[TouchController] Received KeyboardShow: show=%d", show);
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    if (self.view && !self.isBeingDismissed) {
+                        if (show) {
+                            [self.touchControllerTextField becomeFirstResponder];
+                        } else {
+                            [self.touchControllerTextField resignFirstResponder];
+                        }
+                    }
+                });
+            } else {
+                NSLog(@"[TouchController] KeyboardShowMessage too short: %lu bytes", (unsigned long)messageData.length);
+            }
+            break;
+        }
+        case PROXY_MESSAGE_TYPE_CAPABILITY: {
+            // Mod → launcher 方向的能力协商（未来扩展点）
+            // 当前启动器不处理 Mod 声明的能力，仅记录日志
+            if (messageData.length >= 6) {
+                uint8_t nameLen;
+                [messageData getBytes:&nameLen range:NSMakeRange(4, 1)];
+                if (messageData.length >= (NSUInteger)(5 + nameLen + 1)) {
+                    NSRange nameRange = NSMakeRange(5, nameLen);
+                    NSString *capabilityName = [[NSString alloc] initWithData:[messageData subdataWithRange:nameRange] encoding:NSUTF8StringEncoding];
+                    uint8_t enabledByte;
+                    [messageData getBytes:&enabledByte range:NSMakeRange(5 + nameLen, 1)];
+                    NSLog(@"[TouchController] Received Capability: name=%@, enabled=%d", capabilityName, enabledByte != 0);
+                } else {
+                    NSLog(@"[TouchController] CapabilityMessage too short for declared name length");
+                }
+            }
+            break;
+        }
+        default: {
+            NSUInteger dumpLen = MIN(messageData.length, (NSUInteger)32);
+            NSMutableString *hexDump = [NSMutableString string];
+            const uint8_t *bytes = (const uint8_t *)[messageData bytes];
+            for (NSUInteger i = 0; i < dumpLen; i++) {
+                [hexDump appendFormat:@"%02x ", bytes[i]];
+            }
+            NSLog(@"[TouchController] Unknown message type: %d, length: %lu, hex: %@",
+                  type, (unsigned long)messageData.length, hexDump);
+            break;
+        }
+    }
+}
+
+// åå§åææ¬è¾å¥å­æ®µ
+#pragma mark - GestureRecognizer Delegate
+
+// 仅 moveViewPanGesture 需要特殊判定；其他手势保持默认行为
+- (BOOL)gestureRecognizerShouldBegin:(UIGestureRecognizer *)gestureRecognizer {
+    if (gestureRecognizer == self.moveViewPanGesture) {
+        // 条件 1: TouchController 必须启用
+        if (!getPrefBool(@"control.mod_touch_enable")) return NO;
+        // 条件 2: 必须是静态库模式（mode == 2）
+        NSInteger mode = [getPrefObject(@"control.mod_touch_mode") integerValue];
+        if (mode != 2) return NO;
+        // 条件 3: 移动视角开关必须打开
+        if (!getPrefBool(@"control.mod_touch_moveview_enable")) return NO;
+        // 条件 4: 必须在游戏内（isGrabbing 为 true）
+        if (isGrabbing != JNI_TRUE) return NO;
+        // 条件 5: 触摸起点必须在 touchView 右半区
+        CGPoint location = [gestureRecognizer locationInView:self.touchView];
+        if (location.x < self.touchView.bounds.size.width / 2.0) return NO;
+        return YES;
+    }
+    return YES;
+}
+
+#pragma mark - TouchController MoveView Gesture
+
+// 处理右半区滑动手势，发送 MoveViewMessage 给 TouchController
+- (void)handleMoveViewPanGesture:(UIPanGestureRecognizer *)gesture {
+    // 双重检查（防御性编程，即使 gestureRecognizerShouldBegin 返回 YES 也再次验证）
+    if (!getPrefBool(@"control.mod_touch_enable")) return;
+    if (!getPrefBool(@"control.mod_touch_moveview_enable")) return;
+    if (isGrabbing != JNI_TRUE) return;
+
+    UIPanGestureRecognizer *panGesture = (UIPanGestureRecognizer *)gesture;
+    CGPoint translation = [panGesture translationInView:self.touchView];
+
+    switch (panGesture.state) {
+        case UIGestureRecognizerStateBegan:
+            // 起始位置无需特殊处理，translation 已经是相对起点
+            break;
+        case UIGestureRecognizerStateChanged: {
+            // 计算增量视角变化
+            // 注意：deltaPitch 对应 Y 轴（上下），deltaYaw 对应 X 轴（左右）
+            // 灵敏度系数：将屏幕像素转换为合理的视角变化
+            // 1.0 表示 1:1 映射（screenBased=true 时 Mod 端会乘以 sensitivity）
+            float deltaPitch = (float)translation.y;
+            float deltaYaw = (float)translation.x;
+            [self sendMoveViewWithDeltaPitch:deltaPitch deltaYaw:deltaYaw];
+            // 重置 translation 为零，让下一帧 delta 是增量而非累计
+            [panGesture setTranslation:CGPointZero inView:self.touchView];
+            break;
+        }
+        case UIGestureRecognizerStateEnded:
+        case UIGestureRecognizerStateCancelled:
+        case UIGestureRecognizerStateFailed:
+            // 清理状态（无需特殊操作，translation 已被重置或手势已结束）
+            break;
         default:
-            NSLog(@"[TouchController] Unknown message type: %d", type);
             break;
     }
 }
 
-// 初始化文本输入字段
 - (void)setupTouchControllerTextInput {
     if (!self.touchControllerTextField) {
         self.touchControllerTextField = [[UITextField alloc] initWithFrame:CGRectZero];
@@ -586,19 +854,19 @@ static GameSurfaceView* pojavWindow;
         self.touchControllerTextField.keyboardType = UIKeyboardTypeDefault;
         [self.view addSubview:self.touchControllerTextField];
 
-        // 添加文本变化监听
+        // æ·»å ææ¬ååçå¬
         [self.touchControllerTextField addTarget:self
                                           action:@selector(textFieldDidChange:)
                                 forControlEvents:UIControlEventEditingChanged];
     }
 }
 
-// 处理文本变化
+// å¤çææ¬åå
 - (void)textFieldDidChange:(UITextField *)textField {
     [self sendTextInputStatus];
 }
 
-// 显示文本输入界面
+// æ¾ç¤ºææ¬è¾å¥çé¢
 - (void)showTouchControllerTextInput {
     if (!self.touchControllerTextInputEnabled) return;
 
@@ -606,19 +874,19 @@ static GameSurfaceView* pojavWindow;
     self.touchControllerTextField.hidden = NO;
     [self.touchControllerTextField becomeFirstResponder];
 
-    // 发送输入区域信息
+    // åéè¾å¥åºåä¿¡æ¯
     [self sendInputAreaWithRect:self.touchControllerTextField.frame];
 
-    // 发送初始文本状态
+    // åéåå§ææ¬ç¶æ
     [self sendTextInputStatus];
 }
 
-// 隐藏文本输入界面
+// éèææ¬è¾å¥çé¢
 - (void)hideTouchControllerTextInput {
     [self.touchControllerTextField resignFirstResponder];
     self.touchControllerTextField.hidden = YES;
 
-    // 发送空状态以关闭输入
+    // åéç©ºç¶æä»¥å³é­è¾å¥
     NSData *messageData = [self encodeInputStatusMessageWithText:nil
                                               compositionStart:0
                                               compositionLength:0
@@ -656,24 +924,70 @@ static GameSurfaceView* pojavWindow;
         [self setNeedsUpdateOfHomeIndicatorAutoHidden];
     }
 
-    id tickInput = ^{
-        [GyroInput tick];
-        [ControllerInput tick];
-    };
-    CADisplayLink *displayLink = [CADisplayLink displayLinkWithTarget:tickInput selector:@selector(invoke)];
+    // 渲染循环 tick：Gyro/Controller 输入采样（FPS 计数已移至 native pojavSwapBuffers）
+    // Vulkan 模式下 MC 不调用 glfwSwapBuffers，FPS 计数器不递增，
+    // 使用 CADisplayLink 作为 fallback：每帧触发时递增计数器。
+    //
+    // 关键修复（Vulkan FPS 显示无效）：
+    //   之前使用 [CADisplayLink displayLinkWithTarget:tickInput selector:@selector(invoke)]
+    //   传递 block，但 block 的 invoke 方法签名是 -(void)invoke，而 CADisplayLink 期望的
+    //   selector 签名是 -(void)selector:(CADisplayLink*)link。签名不匹配导致回调不触发，
+    //   FPS 计数器永远不递增，显示为 0。
+    //   修复：使用专门的 target 类 PLDisplayLinkTarget，提供正确签名的回调方法。
+    //
+    //   另一个问题：currentRenderer 在 viewDidLoad 时从 PLProfiles 读取，但 JavaLauncher.m
+    //   可能在启动时修改 AMETHYST_RENDERER 环境变量（如 auto → ANGLE）。
+    //   因此同时检查 PLProfiles 和 AMETHYST_RENDERER 环境变量，任一为 Vulkan 即启用 fallback。
+    //
+    //   关键修复（Vulkan 渲染器 + OpenGL 路径的 FPS 计数）：
+    //   当 renderer=libMoltenVK.dylib 但 MC 26.2+ 选 prefer_opengl 时，MC 走 GL 路径
+    //   （glfwWindowHint(GLFW_OPENGL_API)），pojavSwapBuffers 会被调用（经 eglSwapBuffers）。
+    //   此时不应启用 CADisplayLink fallback，否则会与 pojavSwapBuffers 的 FPS 计数重复。
+    //   只有真正的 Vulkan 路径（graphicsApi=prefer_vulkan 且 renderer=libMoltenVK.dylib）
+    //   才需要 CADisplayLink fallback，因为 Vulkan 路径不调用 pojavSwapBuffers。
+    //
+    //   注意（阶段2修复）：此处的 configuredVulkanExpected 仅用于诊断日志（PLDisplayLinkTarget.isVulkanMode），
+    //   实际是否启用 fallback 由 displayLinkTick: 内部每帧动态查询 pojavIsActualVulkanPath()
+    //   （读 clientAPI == GLFW_NO_API）决定，与 MC 真实渲染路径一致。
+    NSString *currentRenderer = [PLProfiles resolveKeyForCurrentProfile:@"renderer"];
+    NSString *envRenderer = NSProcessInfo.processInfo.environment[@"AMETHYST_RENDERER"];
+    NSString *graphicsApi = NSProcessInfo.processInfo.environment[@"AMETHYST_GRAPHICS_API"];
+    BOOL isVulkanRenderer = [currentRenderer isEqualToString:@ RENDERER_NAME_VULKAN] ||
+                            [envRenderer isEqualToString:@ RENDERER_NAME_VULKAN];
+    // 配置预期 Vulkan 路径：仅用于诊断日志，对比"配置预期"与"MC 实际选择"的差异
+    BOOL configuredVulkanExpected = isVulkanRenderer &&
+        ![graphicsApi isEqualToString:@"prefer_opengl"] &&
+        ![graphicsApi isEqualToString:@"opengl"];
+    NSLog(@"[SurfaceViewController] FPS counter setup: profileRenderer=%@, envRenderer=%@, graphicsApi=%@, isVulkan=%d, configuredVulkanExpected=%d (actual path decided at runtime via pojavIsActualVulkanPath)",
+          currentRenderer, envRenderer, graphicsApi, isVulkanRenderer, configuredVulkanExpected);
+
+    PLDisplayLinkTarget *linkTarget = [[PLDisplayLinkTarget alloc] initWithVulkanMode:configuredVulkanExpected];
+    CADisplayLink *displayLink = [CADisplayLink displayLinkWithTarget:linkTarget
+                                                            selector:@selector(displayLinkTick:)];
     if (@available(iOS 15.0, tvOS 15.0, *)) {
-        if(getPrefBool(@"video.max_framerate")) {
-            displayLink.preferredFrameRateRange = CAFrameRateRangeMake(30, 120, 120);
-        } else {
-            displayLink.preferredFrameRateRange = CAFrameRateRangeMake(30, 60, 60);
-        }
+        // max_framerate 选项已移除：始终采用 30-120Hz 自适应范围。
+        // 屏幕硬件决定实际帧率（60Hz 设备仍为 60，120Hz ProMotion 设备可达 120），
+        // 不再人为限制在 60FPS。配合 disable_game_vsync 完整解锁 VSync 后帧率可超过屏幕刷新率。
+        displayLink.preferredFrameRateRange = CAFrameRateRangeMake(30, 120, 120);
     }
     [displayLink addToRunLoop:NSRunLoop.currentRunLoop forMode:NSRunLoopCommonModes];
+    self.statsDisplayLink = displayLink;
+    self.statsDisplayLinkTarget = linkTarget;  // 强引用防止释放
+
+    // 低频采样定时器：每 1 秒读取一次 native FPS 计数器和内存占用
+    // 参照 FCL/ZL2 的 1Hz 采样策略（FCL_GameMenu.java Thread.sleep(1000)）
+    // pojavGetAndResetFps() 读取并重置计数器，1 秒间隔直接返回 FPS 值
+    self.statsTimer = [NSTimer scheduledTimerWithTimeInterval:1.0
+                                                      target:self
+                                                    selector:@selector(updateGameStats)
+                                                    userInfo:nil
+                                                     repeats:YES];
+    [[NSRunLoop currentRunLoop] addTimer:self.statsTimer forMode:NSRunLoopCommonModes];
 
     CGFloat screenScale = UIScreen.mainScreen.scale;
     [self updateSavedResolution];
 
-    self.rootView = [[UIView alloc] initWithFrame:CGRectMake(0, 0, self.view.frame.size.width + 30.0, self.view.frame.size.height)];
+    self.rootView = [[UIView alloc] initWithFrame:CGRectMake(0, 0, self.view.frame.size.width, self.view.frame.size.height)];
     [self.view addSubview:self.rootView];
 
     self.ctrlView = [[ControlLayout alloc] initWithFrame:getSafeArea(self.view.frame)];
@@ -686,7 +1000,7 @@ static GameSurfaceView* pojavWindow;
     pojavWindow = self.surfaceView;
 
     self.touchView = [[UIView alloc] initWithFrame:self.view.frame];
-    self.touchView.backgroundColor = [UIColor colorWithRed:0 green:0 blue:0 alpha:1];
+    self.touchView.backgroundColor = [UIColor colorWithRed:0.05 green:0.06 blue:0.09 alpha:1.0];
     self.touchView.multipleTouchEnabled = YES;
     [self.touchView addSubview:self.surfaceView];
 
@@ -704,6 +1018,8 @@ static GameSurfaceView* pojavWindow;
     self.tapGesture.numberOfTapsRequired = 1;
     self.tapGesture.numberOfTouchesRequired = 1;
     self.tapGesture.cancelsTouchesInView = NO;
+    self.tapGesture.delaysTouchesBegan = NO;
+    self.tapGesture.delaysTouchesEnded = NO;
     [self.touchView addGestureRecognizer:self.tapGesture];
 
     self.doubleTapGesture = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(surfaceOnDoubleClick:)];
@@ -712,21 +1028,24 @@ static GameSurfaceView* pojavWindow;
     self.doubleTapGesture.numberOfTapsRequired = 2;
     self.doubleTapGesture.numberOfTouchesRequired = 1;
     self.doubleTapGesture.cancelsTouchesInView = NO;
+    self.doubleTapGesture.delaysTouchesBegan = NO;
+    self.doubleTapGesture.delaysTouchesEnded = NO;
     [self.touchView addGestureRecognizer:self.doubleTapGesture];
 
     self.longPressGesture = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(surfaceOnLongpress:)];
     self.longPressGesture.allowedTouchTypes = @[@(UITouchTypeDirect)];
     self.longPressGesture.cancelsTouchesInView = NO;
+    self.longPressGesture.delaysTouchesBegan = NO;
+    self.longPressGesture.delaysTouchesEnded = NO;
     self.longPressGesture.delegate = self;
-    // 设置手势依赖关系：只有当单击和双击手势失败时，长按手势才会被识别
-    [self.longPressGesture requireGestureRecognizerToFail:self.tapGesture];
-    [self.longPressGesture requireGestureRecognizerToFail:self.doubleTapGesture];
     [self.touchView addGestureRecognizer:self.longPressGesture];
 
     self.longPressTwoGesture = [[UILongPressGestureRecognizer alloc]initWithTarget:self action:@selector(keyboardGesture:)];
     self.longPressTwoGesture.numberOfTouchesRequired = 2;
     self.longPressTwoGesture.allowedTouchTypes = @[@(UITouchTypeDirect)];
     self.longPressTwoGesture.cancelsTouchesInView = NO;
+    self.longPressTwoGesture.delaysTouchesBegan = NO;
+    self.longPressTwoGesture.delaysTouchesEnded = NO;
     self.longPressTwoGesture.delegate = self;
     [self.touchView addGestureRecognizer:self.longPressTwoGesture];
 
@@ -735,7 +1054,22 @@ static GameSurfaceView* pojavWindow;
     self.scrollPanGesture.delegate = self;
     self.scrollPanGesture.minimumNumberOfTouches = 2;
     self.scrollPanGesture.maximumNumberOfTouches = 2;
+    self.scrollPanGesture.cancelsTouchesInView = NO;
+    self.scrollPanGesture.delaysTouchesBegan = NO;
+    self.scrollPanGesture.delaysTouchesEnded = NO;
     [self.touchView addGestureRecognizer:self.scrollPanGesture];
+
+    // TouchController 移动视角手势：右半区单指滑动
+    self.moveViewPanGesture = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handleMoveViewPanGesture:)];
+    self.moveViewPanGesture.allowedTouchTypes = @[@(UITouchTypeDirect)];
+    self.moveViewPanGesture.delegate = self;
+    self.moveViewPanGesture.maximumNumberOfTouches = 1;
+    self.moveViewPanGesture.minimumNumberOfTouches = 1;
+    // 不取消 touches 事件，让 touchesMoved 仍能触发（与 TC AddPointer 并存）
+    self.moveViewPanGesture.cancelsTouchesInView = NO;
+    self.moveViewPanGesture.delaysTouchesBegan = NO;
+    self.moveViewPanGesture.delaysTouchesEnded = NO;
+    [self.touchView addGestureRecognizer:self.moveViewPanGesture];
 
     virtualMouseEnabled = getPrefBool(@"control.virtmouse_enable");
     virtualMouseFrame = CGRectMake(self.view.frame.size.width / 2, self.view.frame.size.height / 2, 18, 27);
@@ -746,7 +1080,9 @@ static GameSurfaceView* pojavWindow;
     self.mousePointerView.userInteractionEnabled = NO;
     [self.touchView addSubview:self.mousePointerView];
 
-    [[NSNotificationCenter defaultCenter] addObserverForName:@"MousePointerUpdated" object:nil queue:[NSOperationQueue mainQueue] usingBlock:^(NSNotification * _Nonnull note) {
+    // 关键修复（UI 累积异常）：将块观察者存为属性，dealloc 中移除。
+    // 之前返回值未存储，导致每次新建 SurfaceViewController 都泄漏一个观察者 + 强引用 self。
+    self.mousePointerUpdatedCallback = [[NSNotificationCenter defaultCenter] addObserverForName:@"MousePointerUpdated" object:nil queue:[NSOperationQueue mainQueue] usingBlock:^(NSNotification * _Nonnull note) {
         [self reloadMousePointerImage];
     }];
 
@@ -808,11 +1144,11 @@ static GameSurfaceView* pojavWindow;
     
     self.touchSender = [[TouchSender alloc] init];
 
-    // 初始化 TouchController 静态库 Transport
+    // åå§å TouchController éæåº Transport
     if (getPrefBool(@"control.mod_touch_enable")) {
         NSInteger mode = [getPrefObject(@"control.mod_touch_mode") integerValue];
         if (mode == 2 && [TouchControllerBridge isTouchControllerAvailable]) {
-            // 静态库模式：创建 Transport
+            // éæåºæ¨¡å¼ï¼åå»º Transport
             self.touchControllerTransportHandle = [TouchControllerBridge createTransportWithName:@"/tmp/touchcontroller.sock"];
             if (self.touchControllerTransportHandle < 0) {
                 NSLog(@"[TouchController] Failed to create transport for static library mode");
@@ -826,15 +1162,18 @@ static GameSurfaceView* pojavWindow;
         self.touchControllerTransportHandle = -1;
     }
 
-    // 初始化 TouchController 文本输入支持
+    // åå§å TouchController ææ¬è¾å¥æ¯æ
     if (self.touchControllerTransportHandle >= 0) {
         self.touchControllerTextInputEnabled = YES;
         [self setupTouchControllerTextInput];
         NSLog(@"[TouchController] Text input support initialized");
 
-        // 启动消息接收定时器
+        // å¯å¨æ¶æ¯æ¥æ¶å®æ¶å¨
         [self startTouchControllerMessageLoop];
     }
+
+    // 阶段13：显示启动遮罩层（在 launchMinecraft 之前显示，首帧渲染后自动移除）
+    [self setupLaunchOverlay];
 
     [self launchMinecraft];
 }
@@ -852,6 +1191,17 @@ static GameSurfaceView* pojavWindow;
 - (void)viewDidAppear:(BOOL)animated {
     [super viewDidAppear:animated];
     [self setNeedsUpdateOfPrefersPointerLocked];
+
+    // LAN 端口检测器已改为手动输入模式（LanPortDetector.h 说明），
+    // 自动检测（startDetecting/stopDetecting）已移除，无需在此启动。
+}
+
+- (void)viewDidLayoutSubviews {
+    [super viewDidLayoutSubviews];
+    // 更新启动遮罩层渐变背景的 frame（旋转/尺寸变化时）
+    if (self.launchGradientLayer && self.launchOverlayView) {
+        self.launchGradientLayer.frame = self.launchOverlayView.bounds;
+    }
 }
 
 - (void)updateAudioSettings {
@@ -878,11 +1228,22 @@ static GameSurfaceView* pojavWindow;
     if (!getEntitlementValue(@"com.apple.private.memorystatus")) {
         return;
     }
-    int limit = getPrefInt(@"java.allocated_memory") + 1024;
+    // 必须与 JavaLauncher.m 中 launchJVM 的 allocmem 计算保持一致，
+    // 否则会出现 Jetsam 上限 < JVM Xmx + native 开销 的情况，
+    // 导致系统在 JVM 启动阶段 SIGKILL 进程（日志表现为 "XPC connection interrupted"）。
+    int allocmem;
+    if (getPrefBool(@"java.auto_ram")) {
+        CGFloat autoRatio = getEntitlementValue(@"com.apple.private.memorystatus") ? 0.4 : 0.25;
+        allocmem = roundf((NSProcessInfo.processInfo.physicalMemory >> 20) * autoRatio);
+    } else {
+        allocmem = (int)getPrefInt(@"java.allocated_memory");
+    }
+    // 1024 MB 留给 JVM native 堆 + UIKit/Metal/EGL 等非 Java 堆开销。
+    int limit = allocmem + 1024;
     if (memorystatus_control(MEMORYSTATUS_CMD_SET_JETSAM_TASK_LIMIT, getpid(), limit, NULL, 0) == -1) {
         NSLog(@"Failed to set Jetsam task limit: error: %s", strerror(errno));
     } else {
-        NSLog(@"Successfully set Jetsam task limit");
+        NSLog(@"Successfully set Jetsam task limit (allocmem=%d MB, limit=%d MB)", allocmem, limit);
     }
 }
 
@@ -951,6 +1312,39 @@ static GameSurfaceView* pojavWindow;
     windowHeight = roundf(physicalHeight * resolutionScale);
     if ((windowWidth % 2) != 0) { --windowWidth; }
     if ((windowHeight % 2) != 0) { --windowHeight; }
+    if ([self.surfaceView.layer isKindOfClass:CAMetalLayer.class]) {
+        CAMetalLayer *metalLayer = (CAMetalLayer *)self.surfaceView.layer;
+        metalLayer.drawableSize = CGSizeMake(MAX(windowWidth, 1), MAX(windowHeight, 1));
+        // 解锁帧率（关闭垂直同步）：三缓冲。
+        // 默认 maximumDrawableCount（通常为 2）下，当两个 drawable 都在等待呈现时，
+        // nextDrawable 会阻塞到 vblank 释放一个 drawable，间接把渲染线程锁在刷新率。
+        // 设为 3（三缓冲）后几乎总有空闲 drawable，渲染线程不再因等待 drawable 而 stall，
+        // 配合 VSync 关闭可让帧率超过屏幕刷新率。该值是 Metal 低延迟/高吞吐渲染的标准设置。
+        // 注：此优化对 GL 类渲染器（经 CAMetalLayer 呈现）最有意义；Vulkan/MoltenVK 自管 swapchain。
+        metalLayer.maximumDrawableCount = 3;
+
+        // 显式设置 presentsWithTransaction=NO（默认值）。
+        // presentsWithTransaction=YES 会导致 presentDrawable 同步等待 Core Animation 事务提交，
+        // 增加延迟且不会提高帧率。设为 NO 让 presentDrawable 异步提交到 Core Animation，
+        // 渲染线程可以立即继续下一帧渲染，配合 eglSwapInterval(0) 实现帧率解锁。
+        // 这是 Metal 高吞吐渲染的标准配置。
+        metalLayer.presentsWithTransaction = NO;
+
+        // 确保异步绘制开启（GameSurfaceView.initWithFrame 已设置，此处二次确认）
+        metalLayer.drawsAsynchronously = YES;
+
+        // 记录 Metal 层配置（仅首次），帮助诊断帧率问题
+        static BOOL s_loggedMetalConfig = NO;
+        if (!s_loggedMetalConfig) {
+            s_loggedMetalConfig = YES;
+            NSLog(@"[SurfaceVC] CAMetalLayer configured: drawableSize=%.0fx%.0f, maximumDrawableCount=%ld, presentsWithTransaction=%d, drawsAsynchronously=%d, contentsScale=%.2f",
+                  metalLayer.drawableSize.width, metalLayer.drawableSize.height,
+                  (long)metalLayer.maximumDrawableCount,
+                  metalLayer.presentsWithTransaction,
+                  metalLayer.drawsAsynchronously,
+                  metalLayer.contentsScale);
+        }
+    }
     CallbackBridge_nativeSendScreenSize(windowWidth, windowHeight);
 }
 
@@ -988,17 +1382,311 @@ static GameSurfaceView* pojavWindow;
 
 - (void)launchMinecraft {
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        // Validate metadata first（SDL3 预加载需要版本信息）
+        if (!self.metadata) {
+            NSLog(@"[SurfaceViewController] Error: metadata is nil");
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [self dismissLaunchOverlayOnError];
+                showDialog(localize(@"Error", nil), @"æ¸¸æçæ®å è½½å¤±è´¥ï¼è¯·éæ°éæ©çæ¬");
+            });
+            return;
+        }
+
+        // 仅对 SDL3 版本（MC 26.3-snapshot-4+）预加载 libSDL3.dylib 并重绑定符号。
+        // GLFW 版本（1.21.1 等）不需要 SDL3，加载它会初始化 SDL3 UIKit 后端，
+        // 与启动器的 GameSurfaceView/UIScene 冲突，可能导致渲染异常。
+        // 必须在 UIApplicationMain 之后调用，避免 SDL3 constructor 干扰 UIKit 初始化。
+        NSString *versionId = self.metadata[@"id"];
+        if (amethyst_isSDL3Version(versionId)) {
+            NSLog(@"[SurfaceViewController] SDL3 version detected (%@), preloading libSDL3.dylib", versionId);
+            amethyst_preloadSDL3ForHook();
+        } else {
+            NSLog(@"[SurfaceViewController] GLFW version detected (%@), skipping SDL3 preload", versionId);
+        }
+
+        // Validate window dimensions
+        if (windowWidth <= 0 || windowHeight <= 0) {
+            NSLog(@"[SurfaceViewController] Error: invalid window size %dx%d", windowWidth, windowHeight);
+            windowWidth = 1280;
+            windowHeight = 720;
+        }
+        
+        // Get Java version
         int minVersion = [self.metadata[@"javaVersion"][@"majorVersion"] intValue];
         if (minVersion == 0) {
             minVersion = [self.metadata[@"javaVersion"][@"version"] intValue];
         }
+        if (minVersion == 0) {
+            minVersion = 8; // Default to Java 8
+        }
+        
+        // Validate authenticator
         BaseAuthenticator *currentAuth = BaseAuthenticator.current;
-        launchJVM(
-            currentAuth.authData[@"username"],
-            self.metadata,
-            windowWidth, windowHeight,
-            minVersion
-        );
+        if (!currentAuth) {
+            NSLog(@"[SurfaceViewController] Error: no authenticator available");
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [self dismissLaunchOverlayOnError];
+                showDialog(localize(@"Error", nil), @"è¯·åç»å½è´¦æ·");
+            });
+            return;
+        }
+        
+        // Validate accountId（用作账户文件名，传给 Java 端加载对应账户）
+        NSString *accountId = currentAuth.authData[@"accountId"];
+        if (!accountId || accountId.length == 0) {
+            // 兜底：极少数情况下 accountId 缺失（如旧账户未迁移），回退到 username
+            accountId = currentAuth.authData[@"username"];
+            if (!accountId || accountId.length == 0) {
+                accountId = @"Player";
+            }
+        }
+
+        NSLog(@"[SurfaceViewController] Launching Minecraft with accountId: %@, version: %d, size: %dx%d",
+              accountId, minVersion, windowWidth, windowHeight);
+
+        // Launch JVM（args[0] 传 accountId，Java 端 MinecraftAccount.load(accountId) 据此加载账户）
+        int launchResult = launchJVM(accountId, self.metadata, windowWidth, windowHeight, minVersion);
+
+        // JVM 启动失败（返回非 0）：移除启动遮罩层，让用户看到错误对话框
+        // launchJVM 内部失败时会调用 showDialog 显示错误，此处仅负责清理遮罩层
+        if (launchResult != 0) {
+            NSLog(@"[SurfaceViewController] JVM launch failed with code %d", launchResult);
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [self dismissLaunchOverlayOnError];
+            });
+        }
+    });
+}
+
+#pragma mark - 阶段13/16：启动遮罩层（仿 FCL/ZL2 全屏启动进度显示）
+
+/// 创建并显示启动遮罩层（参照 FCL/ZL2 风格重构）：
+///
+/// 设计理念（参照 FCL/ZalithLauncher2）：
+///   - 启动遮罩层是纯视觉层，不拦截任何触摸事件
+///   - userInteractionEnabled = NO，让下层的 gameMenuOverlay（悬浮球/FPS）可交互
+///   - 深色渐变背景 + 毛玻璃效果，营造沉浸式启动体验
+///   - 居中信息卡片展示启动进度、阶段、Java 版本、内存、渲染器
+///   - 底部取消按钮允许用户中止卡住的启动流程
+///
+/// 视觉布局（从上到下）：
+///   ┌─────────────────────────────────┐
+///   │         游戏图标 (72pt)          │
+///   │       旋转指示器 (Medium)        │
+///   │     "正在启动 Minecraft"         │
+///   │      当前阶段文案                │
+///   │   ━━━━━━━━━━━━━━━━ 45%          │
+///   │         已耗时 12秒              │
+///   │  ┌─────────────────────────┐    │
+///   │  │ Java 17 │ 2048MB │ gl4es │    │
+///   │  └─────────────────────────┘    │
+///   │        [ 取消启动 ]              │
+///   └─────────────────────────────────┘
+- (void)setupLaunchOverlay {
+    // ============================================================
+    // FCL 风格启动界面：中间转圈圈 + 显示自定义启动器背景
+    // ============================================================
+    // 参照 FCL (FoldCraftLauncher) 的启动加载界面：
+    //   - 背景显示启动器的自定义壁纸（如果有）
+    //   - 屏幕正中央显示一个大的旋转加载指示器
+    //   - 指示器下方显示简短的标题文字（如"正在启动 Minecraft"）
+    //   - 不显示进度条、百分比、阶段文案、信息卡片等多余元素
+    //   - 底部保留一个小的"取消启动"按钮
+    //
+    // 之前的实现包含了图标、进度条、百分比、已耗时、信息卡片、
+    // 阶段轮转文案等大量元素，过于复杂。FCL 的设计理念是简洁：
+    // 用户只需要知道"正在加载"即可，不需要知道详细的阶段和进度。
+    self.launchStartTime = [NSDate timeIntervalSinceReferenceDate];
+    self.launchOverlayDismissed = NO;
+
+    // ========================================================================
+    // 全屏遮罩容器
+    // ========================================================================
+    // userInteractionEnabled = NO：让触摸穿透到下层的 gameMenuOverlay，
+    // 用户可在启动期间拖动悬浮球、查看 FPS。
+    // 取消按钮单独加到 self.view 上（不受此设置影响）。
+    self.launchOverlayView = [[UIView alloc] initWithFrame:self.view.bounds];
+    self.launchOverlayView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    self.launchOverlayView.userInteractionEnabled = NO;
+    [self.view addSubview:self.launchOverlayView];
+
+    // ========================================================================
+    // 背景层：显示自定义启动器背景
+    // ========================================================================
+    // 有自定义壁纸时：透明遮罩 + 轻微暗化蒙层（增强文字可读性）
+    // 无自定义壁纸时：使用深色渐变作为回退
+    if ([[BackgroundManager sharedManager] hasBackground]) {
+        // 有自定义背景：透明遮罩 + 轻微暗化蒙层
+        self.launchOverlayView.backgroundColor = [UIColor clearColor];
+        UIView *dimOverlay = [[UIView alloc] initWithFrame:self.launchOverlayView.bounds];
+        dimOverlay.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        dimOverlay.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.3];
+        dimOverlay.userInteractionEnabled = NO;
+        [self.launchOverlayView addSubview:dimOverlay];
+    } else {
+        // 无自定义背景：使用深色渐变
+        CAGradientLayer *gradient = [CAGradientLayer layer];
+        gradient.frame = self.launchOverlayView.bounds;
+        gradient.colors = @[
+            (__bridge id)[UIColor colorWithRed:0.08 green:0.09 blue:0.13 alpha:1.0].CGColor,
+            (__bridge id)[UIColor colorWithRed:0.03 green:0.03 blue:0.05 alpha:1.0].CGColor,
+        ];
+        gradient.locations = @[@0.0, @1.0];
+        gradient.startPoint = CGPointMake(0.5, 0.0);
+        gradient.endPoint = CGPointMake(0.5, 1.0);
+        [self.launchOverlayView.layer insertSublayer:gradient atIndex:0];
+        self.launchGradientLayer = gradient;
+    }
+
+    // ========================================================================
+    // 中央内容容器（居中显示转圈圈 + 标题）
+    // ========================================================================
+    UIView *centerContainer = [[UIView alloc] init];
+    centerContainer.translatesAutoresizingMaskIntoConstraints = NO;
+    centerContainer.userInteractionEnabled = NO;
+    [self.launchOverlayView addSubview:centerContainer];
+
+    // 大号旋转指示器（FCL 风格：屏幕正中央的大转圈）
+    self.launchSpinner = [[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleLarge];
+    self.launchSpinner.translatesAutoresizingMaskIntoConstraints = NO;
+    self.launchSpinner.color = [UIColor whiteColor];
+    [self.launchSpinner startAnimating];
+    [centerContainer addSubview:self.launchSpinner];
+
+    // 标题文字（转圈下方，简短提示）
+    self.launchTitleLabel = [[UILabel alloc] init];
+    self.launchTitleLabel.translatesAutoresizingMaskIntoConstraints = NO;
+    self.launchTitleLabel.text = localize(@"launch.title", @"正在启动 Minecraft");
+    self.launchTitleLabel.font = [UIFont systemFontOfSize:16 weight:UIFontWeightMedium];
+    self.launchTitleLabel.textColor = [UIColor colorWithWhite:0.9 alpha:1.0];
+    self.launchTitleLabel.textAlignment = NSTextAlignmentCenter;
+    [centerContainer addSubview:self.launchTitleLabel];
+
+    // ========================================================================
+    // 取消启动按钮（底部，独立添加到 self.view 不受遮罩穿透影响）
+    // ========================================================================
+    self.launchCancelButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    self.launchCancelButton.translatesAutoresizingMaskIntoConstraints = NO;
+    [self.launchCancelButton setTitle:localize(@"launch.cancel", @"取消启动") forState:UIControlStateNormal];
+    [self.launchCancelButton setTitleColor:[UIColor colorWithWhite:0.7 alpha:1.0] forState:UIControlStateNormal];
+    self.launchCancelButton.titleLabel.font = [UIFont systemFontOfSize:14];
+    self.launchCancelButton.backgroundColor = [[UIColor whiteColor] colorWithAlphaComponent:0.1];
+    self.launchCancelButton.layer.cornerRadius = 8;
+    self.launchCancelButton.layer.cornerCurve = kCACornerCurveContinuous;
+    [self.launchCancelButton addTarget:self action:@selector(cancelLaunch) forControlEvents:UIControlEventTouchUpInside];
+    [self.view addSubview:self.launchCancelButton];
+
+    // ========================================================================
+    // 布局约束
+    // ========================================================================
+    [NSLayoutConstraint activateConstraints:@[
+        // 中央容器：水平居中，垂直居中
+        [centerContainer.centerXAnchor constraintEqualToAnchor:self.launchOverlayView.centerXAnchor],
+        [centerContainer.centerYAnchor constraintEqualToAnchor:self.launchOverlayView.centerYAnchor],
+
+        // 旋转指示器：容器顶部居中
+        [self.launchSpinner.topAnchor constraintEqualToAnchor:centerContainer.topAnchor],
+        [self.launchSpinner.centerXAnchor constraintEqualToAnchor:centerContainer.centerXAnchor],
+
+        // 标题：转圈下方
+        [self.launchTitleLabel.topAnchor constraintEqualToAnchor:self.launchSpinner.bottomAnchor constant:16],
+        [self.launchTitleLabel.leadingAnchor constraintEqualToAnchor:centerContainer.leadingAnchor],
+        [self.launchTitleLabel.trailingAnchor constraintEqualToAnchor:centerContainer.trailingAnchor],
+        [self.launchTitleLabel.bottomAnchor constraintEqualToAnchor:centerContainer.bottomAnchor],
+
+        // 取消按钮：底部安全区域上方
+        [self.launchCancelButton.bottomAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.bottomAnchor constant:-24],
+        [self.launchCancelButton.centerXAnchor constraintEqualToAnchor:self.view.centerXAnchor],
+        [self.launchCancelButton.widthAnchor constraintEqualToConstant:120],
+        [self.launchCancelButton.heightAnchor constraintEqualToConstant:36],
+    ]];
+
+    // 注册首帧渲染通知（egl_bridge.m 中 pojavSwapBuffers 首次调用时发送）
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(onFirstFrameRendered)
+                                                 name:@"PojavFirstFrameRendered"
+                                               object:nil];
+}
+
+/// 取消启动：用户点击"取消启动"按钮时调用。
+/// 终止 JVM 启动流程，移除遮罩层，返回启动器主界面。
+- (void)cancelLaunch {
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:localize(@"launch.cancel_confirm_title", @"确认取消启动？")
+                                                                   message:localize(@"launch.cancel_confirm_message", @"取消启动将终止当前的游戏加载流程并返回启动器。")
+                                                            preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:localize(@"launch.cancel_confirm_yes", @"确认取消")
+                                              style:UIAlertActionStyleDestructive
+                                            handler:^(UIAlertAction *action) {
+        NSLog(@"[SurfaceViewController] 用户取消启动");
+        // 移除遮罩层
+        [self dismissLaunchOverlayOnError];
+        // 返回启动器
+        [[SurfaceViewController currentInstance].logOutputView dismissAndReturnToLauncher];
+    }]];
+    [alert addAction:[UIAlertAction actionWithTitle:localize(@"launch.cancel_confirm_no", @"继续等待")
+                                              style:UIAlertActionStyleCancel
+                                            handler:nil]];
+    [self presentViewController:alert animated:YES completion:nil];
+}
+
+/// 定时器回调（每 0.5 秒）：
+/// 1. 基于已耗时计算当前阶段索引（每 2.5 秒一个阶段，避免 static 变量在多次启动间不重置）
+/// 2. 推进进度条（基于已耗时，封顶 95%）
+/// 3. 更新已耗时显示
+- (void)updateLaunchStage {
+    // FCL 风格启动界面不再需要阶段轮转和进度推进。
+    // 此方法保留为空实现仅为兼容可能的旧调用点（实际上 setupLaunchOverlay
+    // 已不再创建 launchStageTimer，此方法不会被调用）。
+}
+
+/// 首帧渲染通知回调：淡出并移除启动遮罩层
+- (void)onFirstFrameRendered {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (self.launchOverlayDismissed) return;
+        self.launchOverlayDismissed = YES;
+
+        [self.launchSpinner stopAnimating];
+
+        NSTimeInterval elapsed = [NSDate timeIntervalSinceReferenceDate] - self.launchStartTime;
+
+        // 隐藏取消按钮（淡出动画与遮罩层一起进行）
+        [self.launchCancelButton setHidden:YES];
+
+        // 淡出移除遮罩层（FCL 风格：简洁的淡出过渡）
+        [UIView animateWithDuration:0.4
+                              delay:0.1
+                            options:UIViewAnimationOptionCurveEaseOut
+                         animations:^{
+            self.launchOverlayView.alpha = 0.0;
+            self.launchCancelButton.alpha = 0.0;
+        }
+                         completion:^(BOOL finished) {
+            [self.launchOverlayView removeFromSuperview];
+            self.launchOverlayView = nil;
+            self.launchGradientLayer = nil;
+            [self.launchCancelButton removeFromSuperview];
+            self.launchCancelButton = nil;
+            [[NSNotificationCenter defaultCenter] removeObserver:self name:@"PojavFirstFrameRendered" object:nil];
+            NSLog(@"[SurfaceViewController] Launch overlay dismissed after %.1f seconds", elapsed);
+        }];
+    });
+}
+
+/// 启动失败时移除遮罩层（JVM 启动失败、metadata 为空等错误路径调用）
+- (void)dismissLaunchOverlayOnError {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (self.launchOverlayDismissed) return;
+        self.launchOverlayDismissed = YES;
+
+        [self.launchSpinner stopAnimating];
+        [[NSNotificationCenter defaultCenter] removeObserver:self name:@"PojavFirstFrameRendered" object:nil];
+
+        [self.launchOverlayView removeFromSuperview];
+        self.launchOverlayView = nil;
+        self.launchGradientLayer = nil;
+        [self.launchCancelButton removeFromSuperview];
+        self.launchCancelButton = nil;
+        NSLog(@"[SurfaceViewController] Launch overlay dismissed due to launch error");
     });
 }
 
@@ -1053,7 +1741,7 @@ static GameSurfaceView* pojavWindow;
 - (void)viewWillTransitionToSize:(CGSize)size withTransitionCoordinator:(id<UIViewControllerTransitionCoordinator>)coordinator
 {
     [coordinator animateAlongsideTransition:^(id<UIViewControllerTransitionCoordinatorContext>  _Nonnull context) {
-        self.rootView.bounds = CGRectMake(0, 0, size.width + 30.0, size.height);
+        self.rootView.bounds = CGRectMake(0, 0, size.width, size.height);
 
         CGRect frame = self.view.frame;
         frame.size = size;
@@ -1109,7 +1797,7 @@ static GameSurfaceView* pojavWindow;
 }
 
 - (void)keyboardGesture:(UIGestureRecognizer*)gestureRecognizer {
-    // [修正] 添加了对设置项 control.two_finger_keyboard 的检查
+    // [ä¿®æ­£] æ·»å äºå¯¹è®¾ç½®é¡¹ control.two_finger_keyboard çæ£æ¥
     if (!getPrefBool(@"control.two_finger_keyboard")) {
         return;
     }
@@ -1527,7 +2215,7 @@ static NSMutableDictionary *s_touchToFingerIdMap = nil;
     if (getPrefBool(@"control.mod_touch_enable")) {
         NSInteger mode = [getPrefObject(@"control.mod_touch_mode") integerValue];
 
-        if (mode == 1) {  // UDP 模式
+        if (mode == 1) {  // UDP æ¨¡å¼
             for (UITouch *touch in touches) {
                 if (touch.view != self.surfaceView) continue;
 
@@ -1537,7 +2225,7 @@ static NSMutableDictionary *s_touchToFingerIdMap = nil;
                 // Send Type 1 (Add Pointer)
                 [self.touchSender sendType:1 id:[self getFingerId:touch] x:x y:y];
             }
-        } else if (mode == 2) {  // 静态库模式
+        } else if (mode == 2) {  // éæåºæ¨¡å¼
             for (UITouch *touch in touches) {
                 if (touch.view != self.surfaceView) continue;
 
@@ -1574,7 +2262,7 @@ static NSMutableDictionary *s_touchToFingerIdMap = nil;
     if (getPrefBool(@"control.mod_touch_enable")) {
         NSInteger mode = [getPrefObject(@"control.mod_touch_mode") integerValue];
 
-        if (mode == 1) {  // UDP 模式
+        if (mode == 1) {  // UDP æ¨¡å¼
             for (UITouch *touch in touches) {
                 if (touch.view != self.surfaceView) continue;
 
@@ -1584,7 +2272,7 @@ static NSMutableDictionary *s_touchToFingerIdMap = nil;
                 // Send Type 1 (Move Pointer)
                 [self.touchSender sendType:1 id:[self getFingerId:touch] x:x y:y];
             }
-        } else if (mode == 2) {  // 静态库模式
+        } else if (mode == 2) {  // éæåºæ¨¡å¼
             for (UITouch *touch in touches) {
                 if (touch.view != self.surfaceView) continue;
 
@@ -1622,13 +2310,13 @@ static NSMutableDictionary *s_touchToFingerIdMap = nil;
     if (getPrefBool(@"control.mod_touch_enable")) {
         NSInteger mode = [getPrefObject(@"control.mod_touch_mode") integerValue];
 
-        if (mode == 1) {  // UDP 模式
+        if (mode == 1) {  // UDP æ¨¡å¼
             for (UITouch *touch in touches) {
                 if (touch.view != self.surfaceView) continue;
                 // Send Type 2 (Remove Pointer) for surfaceView touch ending
                 [self.touchSender sendType:2 id:[self getFingerId:touch] x:0 y:0];
             }
-        } else if (mode == 2) {  // 静态库模式
+        } else if (mode == 2) {  // éæåºæ¨¡å¼
             for (UITouch *touch in touches) {
                 if (touch.view != self.surfaceView) continue;
                 // Send ProxyMessage: RemovePointerMessage
@@ -1651,12 +2339,12 @@ static NSMutableDictionary *s_touchToFingerIdMap = nil;
     if (getPrefBool(@"control.mod_touch_enable")) {
         NSInteger mode = [getPrefObject(@"control.mod_touch_mode") integerValue];
 
-        if (mode == 1) {  // UDP 模式
+        if (mode == 1) {  // UDP æ¨¡å¼
             for (UITouch *touch in touches) {
                 if (touch.view != self.surfaceView) continue;
                 [self.touchSender sendType:2 id:[self getFingerId:touch] x:0 y:0];
             }
-        } else if (mode == 2) {  // 静态库模式
+        } else if (mode == 2) {  // éæåºæ¨¡å¼
             for (UITouch *touch in touches) {
                 if (touch.view != self.surfaceView) continue;
                 [self sendTouchControllerProxyMessage:[self getFingerId:touch] x:0 y:0 isRemove:YES];
@@ -1684,15 +2372,122 @@ static NSMutableDictionary *s_touchToFingerIdMap = nil;
 }
 
 + (BOOL)isRunning {
-    return [UIWindow.mainWindow.rootViewController isKindOfClass:SurfaceViewController.class];
+    return [self currentInstance] != nil;
+}
+
++ (instancetype)currentInstance {
+    UIViewController *rootVC = UIWindow.mainWindow.rootViewController;
+    // 情况1：rootViewController 就是 SurfaceViewController
+    if ([rootVC isKindOfClass:[SurfaceViewController class]]) {
+        return (SurfaceViewController *)rootVC;
+    }
+    // 情况2：SurfaceViewController 以模态方式呈现
+    UIViewController *presentedVC = rootVC.presentedViewController;
+    if ([presentedVC isKindOfClass:[SurfaceViewController class]]) {
+        return (SurfaceViewController *)presentedVC;
+    }
+    return nil;
 }
 
 + (GameSurfaceView *)surface {
     return pojavWindow;
 }
 
+#pragma mark - FPS/内存监控（参照 FCL egl_bridge.c 与 ZL2 MemoryUtils.kt）
+
+- (void)updateGameStats {
+    // 1. 读取 native swap buffer 计数器并重置（参照 FCL CallbackBridge.getFps()）
+    // pojavGetAndResetFps() 返回自上次调用以来的渲染帧数
+    // 采样间隔 1 秒（statsTimer 已改为 1s），所以返回值即为 FPS
+    NSInteger fps = (NSInteger)pojavGetAndResetFps();
+
+    // 2. 获取内存占用（phys_footprint）
+    // 使用 task_vm_info 的 phys_footprint 字段，这是 iOS 上最准确的进程内存占用指标
+    // 包含常驻内存、压缩内存、GPU 内存（UMA 架构下），与 Xcode 内存表盘一致
+    // 参照 ZL2 MemoryUtils.kt 的系统级内存统计理念，在 iOS 上用 phys_footprint 等价
+    double memoryMB = [self currentPhysFootprintMB];
+
+    // 3. 更新 UI（GameMenuOverlayView 内部会 dispatch 到主线程）
+    if ([self.gameMenuOverlay isKindOfClass:[GameMenuOverlayView class]]) {
+        [(GameMenuOverlayView *)self.gameMenuOverlay updateFPS:fps memoryUsageMB:memoryMB];
+    }
+}
+
+- (double)currentPhysFootprintMB {
+    // 使用 TASK_VM_INFO flavor 读取 phys_footprint
+    // phys_footprint 是 Apple 推荐的进程内存占用指标，包含：
+    // - 常驻物理内存（resident_size）
+    // - 压缩内存
+    // - GPU 内存（iOS UMA 架构下 Metal 缓冲区映射到进程地址空间）
+    // 减去通过 mmap 共享的部分，与 Xcode/Memory Graph 显示的值一致
+    task_vm_info_data_t vmInfo;
+    mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
+    kern_return_t kr = task_info(mach_task_self(), TASK_VM_INFO,
+                                 (task_info_t)&vmInfo, &count);
+    if (kr != KERN_SUCCESS) {
+        return 0.0;
+    }
+    // phys_footprint 单位是字节
+    return (double)vmInfo.phys_footprint / (1024.0 * 1024.0);
+}
+
 - (void)dealloc {
-    // 清理 TouchController 资源
+    // 停止 FPS/内存采样定时器与渲染循环
+    [self.statsTimer invalidate];
+    self.statsTimer = nil;
+    [self.statsDisplayLink invalidate];
+    self.statsDisplayLink = nil;
+    self.statsDisplayLinkTarget = nil;  // 释放 CADisplayLink target
+
+    // 清理启动遮罩层资源
+    [[NSNotificationCenter defaultCenter] removeObserver:self name:@"PojavFirstFrameRendered" object:nil];
+    self.launchOverlayView = nil;
+    self.launchGradientLayer = nil;
+
+    // 关键修复（UI 累积异常）：移除 5 个块式通知观察者。
+    // 之前只移除了 PojavFirstFrameRendered，未移除以下 5 个块观察者，
+    // 导致每次进出游戏都泄漏 5 个观察者 + 5 条对 self 的强引用，
+    // 多次进出后多个"已释放"的 VC 同时收到通知操作 UI，造成 UI 行为错乱。
+    // 块观察者必须通过 removeObserver: 显式移除（removeObserver:self 无效）。
+    id defaultCenter = [NSNotificationCenter defaultCenter];
+    if (self.mousePointerUpdatedCallback) {
+        [defaultCenter removeObserver:self.mousePointerUpdatedCallback];
+        self.mousePointerUpdatedCallback = nil;
+    }
+    if (self.mouseConnectCallback) {
+        [defaultCenter removeObserver:self.mouseConnectCallback];
+        self.mouseConnectCallback = nil;
+    }
+    if (self.mouseDisconnectCallback) {
+        [defaultCenter removeObserver:self.mouseDisconnectCallback];
+        self.mouseDisconnectCallback = nil;
+    }
+    if (self.controllerConnectCallback) {
+        [defaultCenter removeObserver:self.controllerConnectCallback];
+        self.controllerConnectCallback = nil;
+    }
+    if (self.controllerDisconnectCallback) {
+        [defaultCenter removeObserver:self.controllerDisconnectCallback];
+        self.controllerDisconnectCallback = nil;
+    }
+
+    // LAN 端口检测器已改为手动输入模式，stopDetecting 已移除，无需调用。
+    // 联机资源（SOCKS5 代理、PortForwarder、ZeroTier）的清理见下方 stopAllMultiplayerServices。
+
+    // 关键修复（P0-A）：游戏退出（存档关闭/JVM 结束）时清理联机资源
+    // 原代码仅停止 LanPortDetector，不清理联机相关的 SOCKS5 代理、端口转发器、
+    // ZeroTier 网络、AMETHYST_SOCKS5_PROXY 环境变量、PLProfiles 中的 serverIp。
+    // 这会导致"存档关闭后端口仍存在"和"下次进游戏必显示连接服务器"。
+    // 修复：在 dealloc 中调用 stopAllMultiplayerServices 彻底清理。
+    // 注意：dealloc 可能在异常路径触发，用 @try/@catch 防止二次崩溃。
+    @try {
+        [[MultiplayerManager sharedManager] stopAllMultiplayerServices];
+        NSLog(@"[SurfaceViewController] dealloc: 联机资源已清理");
+    } @catch (NSException *e) {
+        NSLog(@"[SurfaceViewController] dealloc: 清理联机资源异常：%@", e);
+    }
+
+    //æ¸ç TouchController èµæº
     if (self.touchControllerTransportHandle >= 0) {
         [TouchControllerBridge destroyTransport:self.touchControllerTransportHandle];
         self.touchControllerTransportHandle = -1;
