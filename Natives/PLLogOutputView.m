@@ -14,26 +14,26 @@ static NSMutableArray* logLines;
 static PLLogOutputView* current;
 
 - (instancetype)initWithFrame:(CGRect)frame {
-    UIViewController *vc = [UIViewController new];
-    vc.view = self;
-    self.navController = [[UINavigationController alloc] initWithRootViewController:vc];
-    self.navigationBar = self.navController.navigationBar;
-    
     frame.origin.y = frame.size.height;
     self = [super initWithFrame:frame];
     frame.origin.y = 0;
 
     logLines = [NSMutableArray new];
     self.backgroundColor = [UIColor colorWithWhite:0 alpha:0.5];
-    self.navController.view.hidden = YES;
+    self.hidden = YES;
 
-    vc.navigationItem.rightBarButtonItems = @[
+    UINavigationItem *navigationItem = [[UINavigationItem alloc] init];
+    navigationItem.rightBarButtonItems = @[
         [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemStop
             target:self action:@selector(actionToggleLogOutput)],
         [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemTrash
             target:self action:@selector(actionClearLogOutput)]
     ];
-    vc.title = localize(@"game.menu.log_output", nil);
+    self.navigationBar = [[UINavigationBar alloc] initWithFrame:CGRectMake(0, 0, frame.size.width, 44)];
+    self.navigationBar.items = @[navigationItem];
+    self.navigationBar.topItem.title = localize(@"game.menu.log_output", nil);
+    [self.navigationBar sizeToFit];
+    self.navigationBar.autoresizingMask = UIViewAutoresizingFlexibleWidth;
 
     self.logTableView = [[UITableView alloc] initWithFrame:frame];
     //self.logTableView.allowsSelection = NO;
@@ -129,14 +129,14 @@ static PLLogOutputView* current;
         return;
     }
 
-    UIViewAnimationOptions opt = self.navController.view.hidden ? UIViewAnimationOptionCurveEaseOut : UIViewAnimationOptionCurveEaseIn;
+    UIViewAnimationOptions opt = self.hidden ? UIViewAnimationOptionCurveEaseOut : UIViewAnimationOptionCurveEaseIn;
     [UIView transitionWithView:self duration:0.4 options:UIViewAnimationOptionCurveEaseOut animations:^(void){
         CGRect frame = self.frame;
-        frame.origin.y = self.navController.view.hidden ? 0 : frame.size.height;
-        self.navController.view.hidden = NO;
+        frame.origin.y = self.hidden ? 0 : frame.size.height;
+        self.hidden = NO;
         self.frame = frame;
     } completion: ^(BOOL finished) {
-        self.navController.view.hidden = self.frame.origin.y != 0;
+        self.hidden = self.frame.origin.y != 0;
     }];
 }
 
@@ -185,10 +185,6 @@ static PLLogOutputView* current;
     });
 }
 
-<<<<<<< HEAD
-+ (BOOL)handleExitCode:(int)code {
-    if (!current) return NO;
-=======
 + (void)handleExitCode:(int)code {
     if (!current) return;
     
@@ -201,9 +197,8 @@ static PLLogOutputView* current;
     }
     
     // 退出代码为0时的降级处理（正常退出）
->>>>>>> author-fork/main
     dispatch_async(dispatch_get_main_queue(), ^(void){
-        if (current.navController.view.hidden) {
+        if (current.hidden) {
             [current actionToggleLogOutput];
         }
         // Cleanup navigation bar
@@ -231,13 +226,12 @@ static PLLogOutputView* current;
             NSCharacterSet.newlineCharacterSet];
 
         // Print last 100 lines from latestlog.txt
-        for (int i = (lines.count > 100) ? lines.count - 100 : 0; i < lines.count; i++) {
+        for (int i = MAX(lines.count-100, 0); i < lines.count; i++) {
             [self _appendToLog:lines[i]];
         }
 
         fatalErrorOccurred = YES;
     });
-    return YES;
 }
 
 @end

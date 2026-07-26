@@ -32,7 +32,6 @@ jobs:
     steps:
       - name: Select Xcode 15.4
         run: |
-<<<<<<< HEAD
           set -e
           echo "Available apps in /Applications (matching Xcode*):"
           ls /Applications | grep -E "Xcode(.+)?\.app" || true
@@ -47,9 +46,6 @@ jobs:
           else
             echo "No preinstalled Xcode found. Leaving system default."
           fi
-=======
-          sudo xcode-select -s /Applications/Xcode_15.4.app/Contents/Developer
->>>>>>> author-fork/main
           xcodebuild -version || true
 
       - name: Install GNU Make
@@ -95,50 +91,6 @@ jobs:
           # 与 iOS 构建无关，跳过 smudge 避免 submodule checkout 失败 exit 128
           GIT_LFS_SKIP_SMUDGE: "1"
         run: git submodule update --init --recursive
-
-<<<<<<< HEAD
-      - name: Get gl4es latest commit hash
-        id: gl4es-sha
-        run: |
-          echo "sha=$(git ls-remote https://github.com/AngelAuraMC/HolyGL4ES refs/heads/master | grep -io '^\S*')" >> $GITHUB_OUTPUT
-
-      - name: Cache gl4es
-        uses: actions/cache@v4
-        if: false # set to true if you want to enable caching
-        id: gl4es-cache
-        with:
-          path: gl4es/libs
-          key: gl4es-holy-ios-shared-2-${{ steps.gl4es-sha.outputs.sha }}
-
-      - name: Get gl4es
-        if: false && steps.gl4es-cache.outputs.cache-hit != 'true'
-        uses: actions/checkout@v4
-        with:
-          repository: 'AngleAuraMC/gl4es-114-extra'
-          path: 'gl4es'
-
-      - name: Build gl4es
-        if: false && steps.gl4es-cache.outputs.cache-hit != 'true'
-        continue-on-error: true
-        run: |
-          cd gl4es
-          git config user.email "github-actions@users.noreply.github.com"
-          git config user.name "github-actions"
-          export PATH=/opt/procursus/bin:$PATH
-          wget https://github.com/leetal/ios-cmake/raw/master/ios.toolchain.cmake
-          cmake -B build -DCMAKE_TOOLCHAIN_FILE=ios.toolchain.cmake -DDEFAULT_ES=2 \
-            -DNOX11=ON -DNOEGL=OFF -DSTATICLIB=OFF -DPLATFORM=OS64 \
-            -DCMAKE_C_FLAGS=-Wno-error=implicit-function-declaration
-          cmake --build build --config RelWithDebInfo --target GL || true
-          cp -R lib/libGL.dylib ../Natives/resources/Frameworks/libgl4es_114.dylib || true
-
-      - name: Push gl4es
-        if: false && github.event_name != 'pull_request' && github.ref_name == 'main' && steps.gl4es-cache.outputs.cache-hit != 'true'
-        continue-on-error: true
-        run: |
-          git add Natives/resources/Frameworks/libgl4es_114.dylib || true
-          git commit -am "CI: Update gl4es" || true
-          git push || true
 
       - name: Download MobileGlues prebuilt artifact
         id: download-mg
@@ -187,9 +139,6 @@ jobs:
 
           ls -la
           echo "Artifact downloaded successfully"
-
-=======
->>>>>>> author-fork/main
       - name: Build for ${{ matrix.platform_name }}
         env:
           IPHONEOS_DEPLOYMENT_TARGET: 14.0

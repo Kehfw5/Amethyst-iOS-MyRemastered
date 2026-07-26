@@ -12,29 +12,6 @@
 static EGLDisplay g_EglDisplay;
 static egl_library handle;
 
-<<<<<<< HEAD
-void dlsym_EGL() {
-    void* dl_handle = dlopen("@rpath/libtinygl4angle.dylib", RTLD_GLOBAL);
-    NSCAssert(dl_handle, @(dlerror()));
-    handle.eglBindAPI = dlsym(dl_handle, "eglBindAPI");
-    handle.eglChooseConfig = dlsym(dl_handle, "eglChooseConfig");
-    handle.eglCreateContext = dlsym(dl_handle, "eglCreateContext");
-    handle.eglCreateWindowSurface = dlsym(dl_handle, "eglCreateWindowSurface");
-    handle.eglDestroyContext = dlsym(dl_handle, "eglDestroyContext");
-    handle.eglDestroySurface = dlsym(dl_handle, "eglDestroySurface");
-    handle.eglGetConfigAttrib = dlsym(dl_handle, "eglGetConfigAttrib");
-    handle.eglGetCurrentContext = dlsym(dl_handle, "eglGetCurrentContext");
-    handle.eglGetDisplay = dlsym(dl_handle, "eglGetDisplay");
-    handle.eglGetError = dlsym(dl_handle, "eglGetError");
-    handle.eglGetPlatformDisplay = dlsym(dl_handle, "eglGetPlatformDisplay");
-    handle.eglInitialize = dlsym(dl_handle, "eglInitialize");
-    handle.eglMakeCurrent = dlsym(dl_handle, "eglMakeCurrent");
-    handle.eglSwapBuffers = dlsym(dl_handle, "eglSwapBuffers");
-    handle.eglReleaseThread = dlsym(dl_handle, "eglReleaseThread");
-    handle.eglSwapInterval = dlsym(dl_handle, "eglSwapInterval");
-    handle.eglTerminate = dlsym(dl_handle, "eglTerminate");
-    handle.eglGetCurrentSurface = dlsym(dl_handle, "eglGetCurrentSurface");
-=======
 static void* load_egl_symbol(void *dl_handle, const char *symbol) {
     dlerror();
     void *addr = dlsym(dl_handle, symbol);
@@ -124,7 +101,6 @@ static bool dlsym_EGL() {
         handle.eglGetConfigAttrib && handle.eglGetDisplay && handle.eglGetError &&
         handle.eglInitialize && handle.eglMakeCurrent && handle.eglSwapBuffers &&
         handle.eglReleaseThread && handle.eglSwapInterval && handle.eglTerminate;
->>>>>>> author-fork/main
 }
 
 static bool gl_init() {

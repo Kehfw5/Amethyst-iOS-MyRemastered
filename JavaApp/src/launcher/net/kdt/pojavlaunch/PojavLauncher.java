@@ -61,8 +61,6 @@ public class PojavLauncher {
 
         String sizeStr = System.getProperty("cacio.managed.screensize");
         System.setProperty("glfw.windowSize", sizeStr);
-<<<<<<< HEAD
-=======
         String[] size = sizeStr.split("x");
         MCOptionUtils.load();
         MCOptionUtils.set("fullscreen", "false");
@@ -145,7 +143,6 @@ public class PojavLauncher {
         MCOptionUtils.setDefault("simulationDistance", "5");
         
         MCOptionUtils.save();
->>>>>>> author-fork/main
 
         // Setup Forge splash.properties
         File forgeSplashFile = new File(Tools.DIR_GAME_NEW, "config/splash.properties");
@@ -219,10 +216,7 @@ public class PojavLauncher {
         MinecraftAccount account = MinecraftAccount.load(args[0]);
         JMinecraftVersionList.Version version = Tools.getVersionInfo(args[1]);
         System.out.println("Launching Minecraft " + version.id);
-        
-<<<<<<< HEAD
-        String configPath;
-=======
+
         // ============================================================================
         // GLFW/SDL3 窗口后端版本适配
         // ============================================================================
@@ -271,7 +265,6 @@ public class PojavLauncher {
         // For Minecraft 1.0 and earlier, no language option
         MCOptionUtils.save();
         String configPath = null;
->>>>>>> author-fork/main
         if (version.logging != null) {
             if (version.logging.client.file.id.equals("client-1.12.xml")) {
                 configPath = Tools.DIR_BUNDLE + "/log4j-rce-patch-1.12.xml";

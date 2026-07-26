@@ -3,6 +3,7 @@ package net.kdt.pojavlaunch.uikit;
 import java.io.*;
 import java.lang.reflect.*;
 import java.util.jar.*;
+import net.kdt.pojavlaunch.utils.MCOptionUtils;
 import net.kdt.pojavlaunch.*;
 import org.lwjgl.glfw.*;
 
@@ -11,6 +12,8 @@ public class UIKit {
     public static final int ACTION_UP = 1;
     public static final int ACTION_MOVE = 2;
     public static final int ACTION_MOVE_MOTION = 3;
+
+    private static int guiScale;
 
     private static void patch_FlatLAF_setLinux() {
         String osName = System.getProperty("os.name");
@@ -61,6 +64,18 @@ public class UIKit {
         }
     }
 
+    public static void updateMCGuiScale() {
+        MCOptionUtils.load();
+        String str = MCOptionUtils.get("guiScale");
+        guiScale = (str == null ? 0 :Integer.parseInt(str));
+
+        int scale = Math.max(Math.min(GLFW.mGLFWWindowWidth / 320, GLFW.mGLFWWindowHeight / 240), 1);
+        if(scale < guiScale || guiScale == 0){
+            guiScale = scale;
+        }
+        updateMCGuiScale(guiScale);
+    }
+
     static {
         System.load(System.getenv("BUNDLE_PATH") + "/AngelAuraAmethyst");
     }
@@ -69,8 +84,6 @@ public class UIKit {
     // public static native void runOnUIThread(UIKitCallback callback);
 
     public static native void showError(String title, String message, boolean exitIfOk);
-<<<<<<< HEAD
-=======
 
     private static native void updateMCGuiScale(int scale);
 
@@ -93,5 +106,4 @@ public class UIKit {
      * @return SDL_Window 指针（成功）或 0（失败）
      */
     public static native long sdlCreateWindowWithScene(int w, int h, long flags);
->>>>>>> author-fork/main
-} 
+}

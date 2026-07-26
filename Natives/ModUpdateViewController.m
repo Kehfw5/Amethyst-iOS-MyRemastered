@@ -10,10 +10,7 @@
 #import "ModVersion.h"
 #import "PLPreferences.h"
 #import "ModService.h"
-<<<<<<< HEAD
-=======
 #import "BackgroundManager.h"
->>>>>>> author-fork/main
 #import <objc/runtime.h>
 
 /// 关联对象 key：下载任务对应的 ModDownloadTaskInfo
@@ -79,11 +76,8 @@ typedef NS_ENUM(NSInteger, ModUpdatePhase) {
 
 // 阶段 1：检查结果
 @property (nonatomic, copy) NSArray<ModUpdateResult *> *checkResults;
-<<<<<<< HEAD
-=======
 @property (nonatomic, assign) NSInteger checkCompleted;
 @property (nonatomic, assign) NSInteger checkTotal;
->>>>>>> author-fork/main
 
 // 阶段 2：用户确认阶段的选中项
 @property (nonatomic, strong) NSMutableArray<ModUpdateSelection *> *selections;
@@ -96,13 +90,6 @@ typedef NS_ENUM(NSInteger, ModUpdatePhase) {
 @property (nonatomic, assign) NSInteger downloadCompleted;
 @property (nonatomic, assign) NSInteger downloadTotal;
 
-<<<<<<< HEAD
-// 阶段 1：检查更新进度跟踪
-@property (nonatomic, assign) NSInteger checkCompleted;
-@property (nonatomic, assign) NSInteger checkTotal;
-
-=======
->>>>>>> author-fork/main
 // 阶段 4/5：结果统计
 @property (nonatomic, assign) NSInteger successCount;
 @property (nonatomic, assign) NSInteger failureCount;
@@ -167,11 +154,8 @@ typedef NS_ENUM(NSInteger, ModUpdatePhase) {
     // 取消并销毁 session
     [self.session invalidateAndCancel];
     self.session = nil;
-<<<<<<< HEAD
-=======
     // 移除背景效果变化通知的观察者，避免 dealloc 后收到通知导致野指针崩溃
     [[NSNotificationCenter defaultCenter] removeObserver:self];
->>>>>>> author-fork/main
 }
 
 #pragma mark - 视图加载
@@ -179,11 +163,6 @@ typedef NS_ENUM(NSInteger, ModUpdatePhase) {
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.view.backgroundColor = [UIColor systemBackgroundColor];
-<<<<<<< HEAD
-
-    [self setupBentoLayout];
-    [self transitionToPhase:ModUpdatePhasePrepare];
-=======
     // 适配自定义启动器背景：透明化当前 VC，让全局背景图/毛玻璃透出
     [[BackgroundManager sharedManager] makeViewControllerTransparent:self];
 
@@ -206,7 +185,6 @@ typedef NS_ENUM(NSInteger, ModUpdatePhase) {
     // 重新设置 tableView 背景为透明，确保背景效果切换后仍透出全局背景
     self.tableView.backgroundColor = [UIColor clearColor];
     self.tableView.backgroundView = nil;
->>>>>>> author-fork/main
 }
 
 #pragma mark - Bento Grid 布局

@@ -20,12 +20,9 @@
 @property (nonatomic, strong) NSURLSession *downloadSession;
 @property (nonatomic, strong) NSMutableDictionary<NSURLSessionTask *, ModDownloadHandler> *downloadCompletionHandlers;
 @property (nonatomic, strong) NSMutableDictionary<NSURLSessionTask *, NSString *> *downloadDestinationPaths;
-<<<<<<< HEAD
-=======
 @property (nonatomic, strong) NSMutableDictionary<NSURLSessionTask *, void(^)(NSProgress *)> *downloadProgressHandlers;
 @property (nonatomic, strong) NSMutableDictionary<NSURLSessionTask *, DownloadTaskItem *> *downloadTaskItems;
 @property (nonatomic, strong) NSMutableDictionary<NSURLSessionTask *, NSMutableDictionary *> *downloadProgressSnapshots;
->>>>>>> author-fork/main
 
 // 缓存
 @property (nonatomic, strong) NSMutableDictionary<NSString *, ModItem *> *metadataCache;
@@ -134,26 +131,18 @@
         config.timeoutIntervalForRequest = 120.0;
         config.timeoutIntervalForResource = 300.0;
         config.allowsCellularAccess = YES;
-<<<<<<< HEAD
-        // 提高并发连接数限制（默认4，设为6可提升速度）
-        config.HTTPMaximumConnectionsPerHost = 6;
-=======
         // 参考 FCL/ZalithLauncher2：提升并发连接数 6 → 16，
         // 与 MinecraftResourceDownloadTask 对齐，在同时下载多个 Mod 或并发拉取
         // Mod 元数据时显著提升吞吐量。下载完整性由 JAR 文件本身的格式校验保证
         // （未引入分片下载，避免破坏现有的下载完成回调流程）。
         config.HTTPMaximumConnectionsPerHost = 16;
->>>>>>> author-fork/main
         
         _downloadSession = [NSURLSession sessionWithConfiguration:config delegate:self delegateQueue:nil];
         _downloadCompletionHandlers = [NSMutableDictionary dictionary];
         _downloadDestinationPaths = [NSMutableDictionary dictionary];
-<<<<<<< HEAD
-=======
         _downloadProgressHandlers = [NSMutableDictionary dictionary];
         _downloadTaskItems = [NSMutableDictionary dictionary];
         _downloadProgressSnapshots = [NSMutableDictionary dictionary];
->>>>>>> author-fork/main
 
         // 初始化缓存
         _metadataCache = [NSMutableDictionary dictionary];
@@ -202,18 +191,12 @@
     return data;
 }
 
-<<<<<<< HEAD
-- (nullable NSString *)existingModsFolderForProfile:(NSString *)profileName {
-    NSString *profile = profileName.length ? profileName : @"default";
-    NSFileManager *fm = [NSFileManager defaultManager];
-=======
 /// 解析 profile 的 gameDir 为绝对路径。
 /// profile gameDir 通常是相对路径（如 "./custom_gamedir/{name}"），需相对于 POJAV_GAME_DIR 解析。
 /// 之前直接使用相对路径会导致 mods 文件夹找不到（fileExistsAtPath 对相对路径基于 cwd 解析，
 /// 而 cwd 不一定是 POJAV_GAME_DIR）。
 - (nullable NSString *)resolveAbsoluteGameDirForProfile:(NSString *)profileName {
     NSString *profile = profileName.length ? profileName : @"default";
->>>>>>> author-fork/main
     @try {
         NSDictionary *profiles = PLProfiles.current.profiles;
         NSDictionary *prof = profiles[profile];
@@ -266,8 +249,6 @@
     return nil;
 }
 
-<<<<<<< HEAD
-=======
 /// 获取当前 profile 的 mods 目录，不存在时自动创建
 - (nullable NSString *)ensureModsFolderForProfile:(NSString *)profileName error:(NSError **)error {
     NSString *profile = profileName.length ? profileName : @"default";
@@ -314,7 +295,6 @@
     return modsPath;
 }
 
->>>>>>> author-fork/main
 // ---------- 缓存方法 ----------
 - (BOOL)needsRescanForPath:(NSString *)path {
     __block BOOL needs = YES;
@@ -557,8 +537,6 @@
     NSURLSessionDownloadTask *task = [self.downloadSession downloadTaskWithURL:url];
     self.downloadCompletionHandlers[task] = completion;
     self.downloadDestinationPaths[task] = destinationPath;
-<<<<<<< HEAD
-=======
     if (progress) {
         self.downloadProgressHandlers[task] = progress;
     }
@@ -602,7 +580,6 @@
         return newTask;
     };
 
->>>>>>> author-fork/main
     [task resume];
 }
 
@@ -615,14 +592,9 @@
 
     [self.downloadCompletionHandlers removeObjectForKey:downloadTask];
     [self.downloadDestinationPaths removeObjectForKey:downloadTask];
-<<<<<<< HEAD
-
-    if (!handler || !destinationPath) return;
-=======
     [self.downloadProgressHandlers removeObjectForKey:downloadTask];
     [self.downloadTaskItems removeObjectForKey:downloadTask];
     [self.downloadProgressSnapshots removeObjectForKey:downloadTask];
->>>>>>> author-fork/main
 
     NSFileManager *fm = [NSFileManager defaultManager];
     NSError *moveError = nil;
@@ -633,12 +605,6 @@
     if ([fm fileExistsAtPath:destinationPath]) {
         [fm removeItemAtPath:destinationPath error:nil];
     }
-<<<<<<< HEAD
-    if (![fm moveItemAtURL:location toURL:[NSURL fileURLWithPath:destinationPath] error:&moveError]) {
-        handler(moveError);
-    } else {
-        handler(nil);
-=======
     BOOL success = destinationPath && [fm moveItemAtURL:location toURL:[NSURL fileURLWithPath:destinationPath] error:&moveError];
 
     if (taskItem) {
@@ -651,7 +617,6 @@
     }
     if (handler) {
         handler(success ? nil : moveError);
->>>>>>> author-fork/main
     }
 }
 

@@ -931,7 +931,7 @@ static UIColor *dpvc_fileTypeColor(NSString *fileName) {
 
 - (void)viewDidAppear:(BOOL)animated {
     [super viewDidAppear:animated];
-    
+
     [self.task.textProgress addObserver:self
         forKeyPath:@"fractionCompleted"
         options:NSKeyValueObservingOptionInitial
@@ -940,7 +940,7 @@ static UIColor *dpvc_fileTypeColor(NSString *fileName) {
 
 - (void)viewDidDisappear:(BOOL)animated {
     [super viewDidDisappear:animated];
-    
+
     [self.task.textProgress removeObserver:self forKeyPath:@"fractionCompleted"];
 }
 
@@ -955,16 +955,7 @@ static UIColor *dpvc_fileTypeColor(NSString *fileName) {
         DPVCDownloadCell *cell = objc_getAssociatedObject(progress, @"cell");
         if (!cell) return;
         dispatch_async(dispatch_get_main_queue(), ^{
-<<<<<<< HEAD
-            cell.detailTextLabel.text = progress.localizedAdditionalDescription;
-            WFWorkflowProgressView *progressView = (id)cell.accessoryView;
-            progressView.fractionCompleted = progress.fractionCompleted;
-            if (progress.finished) {
-                [progressView transitionCompletedLayerToVisible:YES animated:NO haptic:NO];
-            }
-=======
             [cell updateWithProgress:progress];
->>>>>>> author-fork/main
         });
     } else if (context == TotalProgressObserverContext) {
         // 总进度更新：更新摘要卡片
