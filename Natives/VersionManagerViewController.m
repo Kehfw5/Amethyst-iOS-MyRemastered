@@ -1059,7 +1059,8 @@ static NSInteger const kSectionVersions    = 1;
         @"MobileGlues",
         @"Zink",
         @"LTW",
-        @"MoltenVK"
+        @"MoltenVK",
+        @"Mithril"
     ];
     self.rendererIcons = @[
         @"wand.and.stars",
@@ -1068,7 +1069,8 @@ static NSInteger const kSectionVersions    = 1;
         @"bolt.fill",
         @"circle.hexagongrid.fill",
         @"square.stack.3d.up.fill",
-        @"flame.fill"
+        @"flame.fill",
+        @"globe"
     ];
     self.rendererDescs = @[
         @"自动选择最佳渲染器",
@@ -1077,7 +1079,8 @@ static NSInteger const kSectionVersions    = 1;
         @"Vulkan 转译 OpenGL",
         @"OpenGL 转 Vulkan",
         @"OpenGL Core→ES 转译（Sodium+光影完美兼容）",
-        @"原生 Vulkan"
+        @"原生 Vulkan",
+        @"Mithril - OpenGL 转 Metal/Vulkan（实验性）"
     ];
 }
 
