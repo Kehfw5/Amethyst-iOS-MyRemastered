@@ -66,8 +66,10 @@ static NSString * const kCachedAnnouncementsTimestampKey = @"cached_announcement
 
 - (void)forceRefreshWithCompletion:(AnnouncementFetchHandler)completion {
     NSString *urlString = [self apiURLString];
+    NSLog(@"[Announcement]Fetching announcements from URL: %@", urlString);
     NSURL *url = [NSURL URLWithString:urlString];
     if (!url) {
+        NSLog(@"[Announcement]Invalid URL: %@", urlString);
         dispatch_async(dispatch_get_main_queue(), ^{
             completion(@[], [NSError errorWithDomain:@"AnnouncementService" code:1 userInfo:@{NSLocalizedDescriptionKey: @"无效的公告 URL"}]);
         });
@@ -81,12 +83,37 @@ static NSString * const kCachedAnnouncementsTimestampKey = @"cached_announcement
     [request setValue:@"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15" forHTTPHeaderField:@"User-Agent"];
     request.timeoutInterval = 15.0;
 
+    NSLog(@"[Announcement]Sending GET request, User-Agent: %@", @"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15");
+
     NSURLSessionDataTask *task = [[NSURLSession sharedSession] dataTaskWithRequest:request completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
-        if (error || !data || ((NSHTTPURLResponse *)response).statusCode != 200) {
+        NSInteger statusCode = ((NSHTTPURLResponse *)response).statusCode;
+        NSUInteger dataLength = data ? data.length : 0;
+
+        NSLog(@"[Announcement]Response received: HTTP %ld, data length=%lu, error=%@",
+              (long)statusCode, (unsigned long)dataLength, error.localizedDescription ?: @"(none)");
+
+        if (error || !data || statusCode != 200) {
             // 网络失败时尝试返回缓存
+            NSLog(@"[Announcement]Request failed, falling back to cache. HTTP=%ld, error=%@", (long)statusCode, error);
             NSArray *cached = [self cachedAnnouncements];
             dispatch_async(dispatch_get_main_queue(), ^{
                 completion(cached ?: @[], error ?: [NSError errorWithDomain:@"AnnouncementService" code:2 userInfo:@{NSLocalizedDescriptionKey: @"公告拉取失败"}]);
+            });
+            return;
+        }
+
+        // 输出响应体前 500 字节（用于诊断返回的是 JSON 还是 HTML 错误页）
+        NSData *previewData = (dataLength > 500) ? [data subdataWithRange:NSMakeRange(0, 500)] : data;
+        NSString *previewString = [[NSString alloc] initWithData:previewData encoding:NSUTF8StringEncoding];
+        NSLog(@"[Announcement]Response preview (first 500 bytes):\n%@", previewString ?: @"(unable to decode as UTF-8)");
+
+        // 检测 MIME 类型，提前识别 HTML 注入
+        NSString *contentType = [((NSHTTPURLResponse *)response) valueForHTTPHeaderField:@"Content-Type"];
+        NSLog(@"[Announcement]Content-Type: %@", contentType ?: @"(missing)");
+        if (contentType && [contentType.lowercaseString containsString:@"text/html"]) {
+            NSLog(@"[Announcement]ERROR: Server returned HTML instead of JSON! InfinityFree may be blocking the request.");
+            dispatch_async(dispatch_get_main_queue(), ^{
+                completion(@[], [NSError errorWithDomain:@"AnnouncementService" code:4 userInfo:@{NSLocalizedDescriptionKey: [NSString stringWithFormat:@"服务器返回了 HTML 而非 JSON（HTTP %ld），可能是反爬虫机制拦截", (long)statusCode]}]);
             });
             return;
         }
@@ -100,6 +127,7 @@ static NSString * const kCachedAnnouncementsTimestampKey = @"cached_announcement
         NSError *parseError = nil;
         NSDictionary *json = [NSJSONSerialization JSONObjectWithData:data options:0 error:&parseError];
         if (parseError || !json) {
+            NSLog(@"[Announcement]JSON parse failed: %@", parseError);
             dispatch_async(dispatch_get_main_queue(), ^{
                 completion(@[], parseError ?: [NSError errorWithDomain:@"AnnouncementService" code:3 userInfo:@{NSLocalizedDescriptionKey: @"公告 JSON 解析失败"}]);
             });
@@ -107,6 +135,7 @@ static NSString * const kCachedAnnouncementsTimestampKey = @"cached_announcement
         }
 
         NSArray *items = [self parseAnnouncementsFromJSON:json];
+        NSLog(@"[Announcement]Successfully parsed %lu announcements", (unsigned long)items.count);
         dispatch_async(dispatch_get_main_queue(), ^{
             completion(items, nil);
         });

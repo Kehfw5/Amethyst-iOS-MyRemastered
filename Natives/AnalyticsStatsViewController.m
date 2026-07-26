@@ -573,8 +573,10 @@ typedef NS_ENUM(NSInteger, StatsSection) {
     }
 
     NSString *urlString = [self statsAPIURLString];
+    NSLog(@"[Stats]Loading stats from URL: %@", urlString);
     NSURL *url = [NSURL URLWithString:urlString];
     if (!url) {
+        NSLog(@"[Stats]Invalid URL: %@", urlString);
         [self handleError:[NSError errorWithDomain:@"AnalyticsStats" code:1
                                        userInfo:@{NSLocalizedDescriptionKey: @"无效的统计 URL"}]];
         return;
@@ -587,6 +589,8 @@ typedef NS_ENUM(NSInteger, StatsSection) {
     [request setValue:@"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15" forHTTPHeaderField:@"User-Agent"];
     request.timeoutInterval = 15.0;
 
+    NSLog(@"[Stats]Sending GET request, User-Agent set to Safari UA");
+
     __weak typeof(self) weakSelf = self;
     NSURLSessionDataTask *task = [[NSURLSession sharedSession] dataTaskWithRequest:request completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
         __strong typeof(weakSelf) strongSelf = weakSelf;
@@ -595,25 +599,47 @@ typedef NS_ENUM(NSInteger, StatsSection) {
         [strongSelf.activityIndicator stopAnimating];
         [strongSelf.refreshControl endRefreshing];
 
-        if (error || !data || ((NSHTTPURLResponse *)response).statusCode != 200) {
+        NSInteger statusCode = ((NSHTTPURLResponse *)response).statusCode;
+        NSUInteger dataLength = data ? data.length : 0;
+        NSLog(@"[Stats]Response received: HTTP %ld, data length=%lu, error=%@",
+              (long)statusCode, (unsigned long)dataLength, error.localizedDescription ?: @"(none)");
+
+        if (error || !data || statusCode != 200) {
             NSString *msg = error.localizedDescription;
             if (msg.length == 0) {
-                NSInteger code = ((NSHTTPURLResponse *)response).statusCode;
-                msg = [NSString stringWithFormat:@"服务器返回错误（HTTP %ld）", (long)code];
+                msg = [NSString stringWithFormat:@"服务器返回错误（HTTP %ld）", (long)statusCode];
             }
+            NSLog(@"[Stats]Request failed. HTTP=%ld, error=%@", (long)statusCode, error);
             [strongSelf handleError:[NSError errorWithDomain:@"AnalyticsStats" code:2
                                                    userInfo:@{NSLocalizedDescriptionKey: msg ?: @"加载失败"}]];
+            return;
+        }
+
+        // 输出响应体前 500 字节（用于诊断返回的是 JSON 还是 HTML 错误页）
+        NSData *previewData = (dataLength > 500) ? [data subdataWithRange:NSMakeRange(0, 500)] : data;
+        NSString *previewString = [[NSString alloc] initWithData:previewData encoding:NSUTF8StringEncoding];
+        NSLog(@"[Stats]Response preview (first 500 bytes):\n%@", previewString ?: @"(unable to decode as UTF-8)");
+
+        // 检测 MIME 类型，提前识别 HTML 注入
+        NSString *contentType = [((NSHTTPURLResponse *)response) valueForHTTPHeaderField:@"Content-Type"];
+        NSLog(@"[Stats]Content-Type: %@", contentType ?: @"(missing)");
+        if (contentType && [contentType.lowercaseString containsString:@"text/html"]) {
+            NSLog(@"[Stats]ERROR: Server returned HTML instead of JSON! InfinityFree may be blocking the request.");
+            [strongSelf handleError:[NSError errorWithDomain:@"AnalyticsStats" code:4
+                                                   userInfo:@{NSLocalizedDescriptionKey: [NSString stringWithFormat:@"服务器返回了 HTML 而非 JSON（HTTP %ld），可能是反爬虫机制拦截", (long)statusCode]}]];
             return;
         }
 
         NSError *parseError = nil;
         NSDictionary *json = [NSJSONSerialization JSONObjectWithData:data options:0 error:&parseError];
         if (parseError || ![json isKindOfClass:[NSDictionary class]]) {
+            NSLog(@"[Stats]JSON parse failed: %@", parseError);
             [strongSelf handleError:[NSError errorWithDomain:@"AnalyticsStats" code:3
                                                    userInfo:@{NSLocalizedDescriptionKey: @"统计数据 JSON 解析失败"}]];
             return;
         }
 
+        NSLog(@"[Stats]Successfully parsed stats JSON with keys: %@", json.allKeys);
         strongSelf.statsData = json;
         strongSelf.errorLabel.hidden = YES;
         strongSelf.retryButton.hidden = YES;

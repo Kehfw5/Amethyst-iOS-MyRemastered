@@ -451,10 +451,20 @@ static NSString * const kAnalyticsMCLaunchTimestampKey = @"analytics_mc_launch_t
     [request setHTTPBody:bodyData];
     request.timeoutInterval = 10.0;
 
+    NSLog(@"[Analytics] Sending POST to %@, action=%@, body length=%lu, sync=%d",
+          urlString, action, (unsigned long)bodyData.length, sync);
+
     // 同步模式用于崩溃场景（进程即将退出）
     if (sync) {
         dispatch_semaphore_t semaphore = dispatch_semaphore_create(0);
         NSURLSessionDataTask *task = [[NSURLSession sharedSession] dataTaskWithRequest:request completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
+            NSInteger statusCode = ((NSHTTPURLResponse *)response).statusCode;
+            NSLog(@"[Analytics] Sync report (%@) HTTP %ld, error=%@", action, (long)statusCode, error.localizedDescription ?: @"(none)");
+            if (error || (statusCode != 200 && statusCode != 201 && statusCode != 204)) {
+                NSData *preview = (data && data.length > 0) ? (data.length > 300 ? [data subdataWithRange:NSMakeRange(0, 300)] : data) : nil;
+                NSString *previewStr = preview ? [[NSString alloc] initWithData:preview encoding:NSUTF8StringEncoding] : @"(no body)";
+                NSLog(@"[Analytics] Sync report failed preview: %@", previewStr);
+            }
             dispatch_semaphore_signal(semaphore);
         }];
         [task resume];
@@ -472,6 +482,17 @@ static NSString * const kAnalyticsMCLaunchTimestampKey = @"analytics_mc_launch_t
         NSInteger statusCode = ((NSHTTPURLResponse *)response).statusCode;
         if (statusCode != 200 && statusCode != 201 && statusCode != 204) {
             NSLog(@"[Analytics] Report (%@) HTTP %ld", action, (long)statusCode);
+            // 输出响应体前 300 字节用于诊断
+            NSData *preview = (data && data.length > 0) ? (data.length > 300 ? [data subdataWithRange:NSMakeRange(0, 300)] : data) : nil;
+            NSString *previewStr = preview ? [[NSString alloc] initWithData:preview encoding:NSUTF8StringEncoding] : @"(no body)";
+            NSLog(@"[Analytics] Report (%@) response preview: %@", action, previewStr);
+            // 检测 HTML 响应
+            NSString *contentType = [((NSHTTPURLResponse *)response) valueForHTTPHeaderField:@"Content-Type"];
+            if (contentType && [contentType.lowercaseString containsString:@"text/html"]) {
+                NSLog(@"[Analytics] ERROR: Server returned HTML for report! InfinityFree may be blocking.");
+            }
+        } else {
+            NSLog(@"[Analytics] Report (%@) success HTTP %ld", action, (long)statusCode);
         }
     }];
     [task resume];
