@@ -275,6 +275,8 @@ native: dep_mg
 	cmake --build $(WORKINGDIR) --config $(CMAKE_BUILD_TYPE) -j$(JOBS)
 	#	--target awt_headless awt_xawt libOSMesaOverride.dylib tinygl4angle AngelAuraAmethyst
 	rm $(WORKINGDIR)/libawt_headless.dylib
+	# Fix liblwjgl.dylib install name (LWJGL sets it to its build path: bin/libs/...)
+	install_name_tool -id @rpath/liblwjgl.dylib $(SOURCEDIR)/Natives/resources/Frameworks/liblwjgl.dylib 2>/dev/null || true
 	echo '[Amethyst v$(VERSION)] native - end'
 
 java:
