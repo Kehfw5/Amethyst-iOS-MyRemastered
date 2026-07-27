@@ -543,6 +543,16 @@ else()
   message(STATUS "ModLoaderIcons directory not found: ${MODLOADER_ICONS_DIR}")
 endif()
 
+# Bundle UniversalJIT26.js into the app so it can be sent to StikJIT at runtime
+# Note: iOS .app bundles are flat (no Resources/ subdir), so use default location
+set(JIT26_SCRIPT "${CMAKE_CURRENT_LIST_DIR}/resources/UniversalJIT26.js")
+if(EXISTS "${JIT26_SCRIPT}")
+ message(STATUS "Including UniversalJIT26.js in bundle")
+ target_sources(AngelAuraAmethyst PRIVATE "${JIT26_SCRIPT}")
+else()
+ message(WARNING "UniversalJIT26.js not found at ${JIT26_SCRIPT}")
+endif()
+
 if("${CMAKE_HOST_SYSTEM_NAME}" MATCHES "Linux|^GNU$|Android")
   target_sources(AngelAuraAmethyst PUBLIC non_darwin_utils.m)
 endif()
