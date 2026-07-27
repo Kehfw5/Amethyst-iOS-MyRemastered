@@ -223,9 +223,29 @@ void registerOpenHandler(JNIEnv *env) {
 
 // JNI_OnLoad
 void JNI_OnLoadGLFW() {
-    vmGlfwClass = (*runtimeJNIEnvPtr)->NewGlobalRef(runtimeJNIEnvPtr, (*runtimeJNIEnvPtr)->FindClass(runtimeJNIEnvPtr, "org/lwjgl/glfw/GLFW"));
+    jclass glfwClass = (*runtimeJNIEnvPtr)->FindClass(runtimeJNIEnvPtr, "org/lwjgl/glfw/GLFW");
+    if (!glfwClass || (*runtimeJNIEnvPtr)->ExceptionCheck(runtimeJNIEnvPtr)) {
+        NSLog(@"[JNI_OnLoadGLFW] FATAL: FindClass(org/lwjgl/glfw/GLFW) failed! glfwClass=%p", glfwClass);
+        (*runtimeJNIEnvPtr)->ExceptionDescribe(runtimeJNIEnvPtr);
+        (*runtimeJNIEnvPtr)->ExceptionClear(runtimeJNIEnvPtr);
+        return;
+    }
+    vmGlfwClass = (*runtimeJNIEnvPtr)->NewGlobalRef(runtimeJNIEnvPtr, glfwClass);
+
     method_internalWindowSizeChanged = (*runtimeJNIEnvPtr)->GetStaticMethodID(runtimeJNIEnvPtr, vmGlfwClass, "internalWindowSizeChanged", "(JII)V");
+    if (!method_internalWindowSizeChanged || (*runtimeJNIEnvPtr)->ExceptionCheck(runtimeJNIEnvPtr)) {
+        NSLog(@"[JNI_OnLoadGLFW] FATAL: GetStaticMethodID(internalWindowSizeChanged) failed! mid=%p", method_internalWindowSizeChanged);
+        (*runtimeJNIEnvPtr)->ExceptionDescribe(runtimeJNIEnvPtr);
+        (*runtimeJNIEnvPtr)->ExceptionClear(runtimeJNIEnvPtr);
+    }
+
     jfieldID field_keyDownBuffer = (*runtimeJNIEnvPtr)->GetStaticFieldID(runtimeJNIEnvPtr, vmGlfwClass, "keyDownBuffer", "Ljava/nio/ByteBuffer;");
+    if (!field_keyDownBuffer || (*runtimeJNIEnvPtr)->ExceptionCheck(runtimeJNIEnvPtr)) {
+        NSLog(@"[JNI_OnLoadGLFW] FATAL: GetStaticFieldID(keyDownBuffer) failed! fid=%p", field_keyDownBuffer);
+        (*runtimeJNIEnvPtr)->ExceptionDescribe(runtimeJNIEnvPtr);
+        (*runtimeJNIEnvPtr)->ExceptionClear(runtimeJNIEnvPtr);
+        return;
+    }
     jobject keyDownBufferJ = (*runtimeJNIEnvPtr)->GetStaticObjectField(runtimeJNIEnvPtr, vmGlfwClass, field_keyDownBuffer);
     keyDownBuffer = (*runtimeJNIEnvPtr)->GetDirectBufferAddress(runtimeJNIEnvPtr, keyDownBufferJ);
 }
