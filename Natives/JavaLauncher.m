@@ -449,3 +449,21 @@ int launchJVM(NSString *username, id launchTarget, int width, int height, int mi
                    /* (const_jargs != NULL) ? JNI_TRUE : */ JNI_FALSE,
                    JNI_TRUE, JNI_FALSE, JNI_TRUE);
 }
+
+BOOL amethyst_isSDL3Version(NSString *versionId) {
+    if (!versionId || versionId.length == 0) return NO;
+    if ([versionId hasPrefix:@"26.3-snapshot-"]) {
+        NSString *numStr = [versionId substringFromIndex:@"26.3-snapshot-".length];
+        return numStr.integerValue >= 4;
+    }
+    if ([versionId hasPrefix:@"26.3-pre"] || [versionId hasPrefix:@"26.3-rc"]
+        || [versionId isEqualToString:@"26.3"]) {
+        return YES;
+    }
+    unichar firstChar = [versionId characterAtIndex:0];
+    if (firstChar >= '0' && firstChar <= '9'
+        && [versionId compare:@"26.4"] != NSOrderedAscending) {
+        return YES;
+    }
+    return NO;
+}

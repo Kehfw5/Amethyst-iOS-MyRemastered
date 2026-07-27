@@ -189,3 +189,23 @@ void init_hookFunctions() {
     };
     rebind_symbols(rebindings, sizeof(rebindings)/sizeof(struct rebinding));
 }
+
+void *amethyst_orig_dlsym(void *handle, const char *name) {
+    return dlsym(handle, name);
+}
+
+void amethyst_preloadSDL3ForHook(void) {
+    void *sdl_lib = dlopen("@rpath/libSDL3.dylib", RTLD_NOLOAD | RTLD_GLOBAL);
+    if (!sdl_lib) {
+        sdl_lib = dlopen("@rpath/libSDL3.dylib", RTLD_LAZY | RTLD_GLOBAL);
+        if (sdl_lib) {
+            NSLog(@"[SDL3 Hook] libSDL3.dylib preloaded, rebinding all images");
+            init_hookFunctions();
+        } else {
+            NSLog(@"[SDL3 Hook] libSDL3.dylib preload failed: %s", dlerror());
+        }
+    } else {
+        NSLog(@"[SDL3 Hook] libSDL3.dylib already loaded, rebinding all images");
+        init_hookFunctions();
+    }
+}
