@@ -14,6 +14,7 @@
 
 #include <assert.h>
 #include <dlfcn.h>
+#include <dlfcn.h>
 #include <libgen.h>
 #include <stdlib.h>
 #include <stdatomic.h>
@@ -251,10 +252,26 @@ void JNI_OnLoadGLFW() {
 }
 
 jint JNI_OnLoad(JavaVM* vm, void* reserved) {
+    static BOOL coreLibLoaded = NO;
     runtimeJavaVMPtr = vm;
 
     JNIEnv *env;
     (*runtimeJavaVMPtr)->GetEnv(runtimeJavaVMPtr, (void **)&env, JNI_VERSION_1_4);
+
+    // First call (for "lwjgl"): load liblwjgl.dylib to register core JNI methods.
+    // The dylib is in the .app bundle and is code-signed, so dlopen works even on TXM.
+    if (!coreLibLoaded) {
+        coreLibLoaded = YES;
+        NSString *frameworksPath = [NSString stringWithUTF8String:NSBundle.mainBundle.bundlePath.UTF8String ?: ""];
+        NSString *lwjglPath = [frameworksPath stringByAppendingPathComponent:@"Frameworks/liblwjgl.dylib"];
+        void *handle = dlopen(lwjglPath.UTF8String, RTLD_NOW | RTLD_GLOBAL);
+        if (handle) {
+            NSLog(@"[JNI_OnLoad] Loaded liblwjgl.dylib from bundle");
+        } else {
+            NSLog(@"[JNI_OnLoad] WARNING: dlopen liblwjgl.dylib failed: %s", dlerror());
+        }
+    }
+
     registerOpenHandler(env);
     if (!getenv("POJAV_SKIP_JNI_GLFW")) {
         runtimeJNIEnvPtr = env;
