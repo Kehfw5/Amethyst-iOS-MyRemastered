@@ -257,6 +257,8 @@ check:
 
 native: dep_mg
 	echo '[Amethyst v$(VERSION)] native - start'
+	# Fix liblwjgl.dylib install name BEFORE cmake so linker uses correct @rpath
+	install_name_tool -id @rpath/liblwjgl.dylib $(SOURCEDIR)/Natives/resources/Frameworks/liblwjgl.dylib 2>/dev/null || true
 	mkdir -p $(WORKINGDIR)
 	cd $(WORKINGDIR) && cmake \
 		-DCMAKE_BUILD_TYPE=$(CMAKE_BUILD_TYPE) \
@@ -276,7 +278,6 @@ native: dep_mg
 	#	--target awt_headless awt_xawt libOSMesaOverride.dylib tinygl4angle AngelAuraAmethyst
 	rm $(WORKINGDIR)/libawt_headless.dylib
 	# Fix liblwjgl.dylib install name (LWJGL sets it to its build path: bin/libs/...)
-	install_name_tool -id @rpath/liblwjgl.dylib $(SOURCEDIR)/Natives/resources/Frameworks/liblwjgl.dylib 2>/dev/null || true
 	echo '[Amethyst v$(VERSION)] native - end'
 
 java:
