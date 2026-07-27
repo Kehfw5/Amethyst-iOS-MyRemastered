@@ -385,7 +385,11 @@ int launchJVM(NSString *username, id launchTarget, int width, int height, int mi
         // In jailed environment, where extended virtual addressing entitlement isn't
         // present (for free dev account), allocating compressed space fails.
         // FIXME: does extended VA allow allocating compressed class space?
-        margv[++margc] = "-XX:-UseCompressedClassPointers";
+        // Java 25+: UseCompressedClassPointers is deprecated and combining it with
+        // MirrorMappedCodeCache on iOS/TXM causes SIGSEGV in get_method_id.
+        // Let Java 25 use its default (compressed class pointers on) and see if
+        // the JVM can allocate the compressed class space without the entitlement.
+        // margv[++margc] = "-XX:-UseCompressedClassPointers";
     }
 
     if ([launchTarget isKindOfClass:NSDictionary.class]) {
