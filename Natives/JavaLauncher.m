@@ -153,6 +153,16 @@ int launchJVM(NSString *username, id launchTarget, int width, int height, int mi
         NSLog(@"[DyldLVBypass] Hook disabled! Loading unsigned dylib will cause code signature error.");
     }
 
+    // Pre-load liblwjgl.dylib so its JNI methods are available when System.load("lwjgl") is called.
+    // On TXM devices, the dyld bypass is disabled but the JIT debugger grants code-signing
+    // bypass, so dlopen should succeed.
+    NSString *lwjglPath = [NSString stringWithFormat:@"%s/Frameworks/liblwjgl.dylib", NSBundle.mainBundle.bundlePath.UTF8String];
+    void *lwjglHandle = dlopen(lwjglPath.UTF8String, RTLD_NOW | RTLD_GLOBAL);
+    if (lwjglHandle) {
+        NSLog(@"[JavaLauncher] Pre-loaded %@ successfully", lwjglPath.lastPathComponent);
+    } else {
+        NSLog(@"[JavaLauncher] Failed to pre-load %@: %s", lwjglPath.lastPathComponent, dlerror());
+    }
 
     init_loadDefaultEnv();
     init_loadCustomEnv();
