@@ -1,5 +1,4 @@
 #import "PLLogOutputView.h"
-#import "PLCrashView.h"
 #import "SurfaceViewController.h"
 #import "utils.h"
 
@@ -14,26 +13,26 @@ static NSMutableArray* logLines;
 static PLLogOutputView* current;
 
 - (instancetype)initWithFrame:(CGRect)frame {
+    UIViewController *vc = [UIViewController new];
+    vc.view = self;
+    self.navController = [[UINavigationController alloc] initWithRootViewController:vc];
+    self.navigationBar = self.navController.navigationBar;
+    
     frame.origin.y = frame.size.height;
     self = [super initWithFrame:frame];
     frame.origin.y = 0;
 
     logLines = [NSMutableArray new];
     self.backgroundColor = [UIColor colorWithWhite:0 alpha:0.5];
-    self.hidden = YES;
+    self.navController.view.hidden = YES;
 
-    UINavigationItem *navigationItem = [[UINavigationItem alloc] init];
-    navigationItem.rightBarButtonItems = @[
+    vc.navigationItem.rightBarButtonItems = @[
         [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemStop
             target:self action:@selector(actionToggleLogOutput)],
         [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemTrash
             target:self action:@selector(actionClearLogOutput)]
     ];
-    self.navigationBar = [[UINavigationBar alloc] initWithFrame:CGRectMake(0, 0, frame.size.width, 44)];
-    self.navigationBar.items = @[navigationItem];
-    self.navigationBar.topItem.title = localize(@"game.menu.log_output", nil);
-    [self.navigationBar sizeToFit];
-    self.navigationBar.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+    vc.title = localize(@"game.menu.log_output", nil);
 
     self.logTableView = [[UITableView alloc] initWithFrame:frame];
     //self.logTableView.allowsSelection = NO;
@@ -129,36 +128,21 @@ static PLLogOutputView* current;
         return;
     }
 
-    UIViewAnimationOptions opt = self.hidden ? UIViewAnimationOptionCurveEaseOut : UIViewAnimationOptionCurveEaseIn;
+    UIViewAnimationOptions opt = self.navController.view.hidden ? UIViewAnimationOptionCurveEaseOut : UIViewAnimationOptionCurveEaseIn;
     [UIView transitionWithView:self duration:0.4 options:UIViewAnimationOptionCurveEaseOut animations:^(void){
         CGRect frame = self.frame;
-        frame.origin.y = self.hidden ? 0 : frame.size.height;
-        self.hidden = NO;
+        frame.origin.y = self.navController.view.hidden ? 0 : frame.size.height;
+        self.navController.view.hidden = NO;
         self.frame = frame;
     } completion: ^(BOOL finished) {
-        self.hidden = self.frame.origin.y != 0;
+        self.navController.view.hidden = self.frame.origin.y != 0;
     }];
-}
-
-/// 返回启动器主界面
-- (void)dismissAndReturnToLauncher {
-    if (fatalErrorOccurred && fatalExitGroup != nil) {
-        [UIApplication.sharedApplication performSelector:@selector(suspend)];
-        dispatch_group_leave(fatalExitGroup);
-    }
 }
 
 + (void)_appendToLog:(NSString *)line {
     if (line.length == 0) {
         return;
     }
-
-    // 通知 LanPortDetector 处理此日志行
-    // LanPortDetector 会检测 MC "对局域网开放"日志中的端口号
-    // 此通知是轻量的，即使 LanPortDetector 未启动也无副作用
-    [[NSNotificationCenter defaultCenter] postNotificationName:@"PLLogOutputLineNotification"
-                                                        object:nil
-                                                      userInfo:@{@"line": line}];
 
     NSIndexPath *indexPath = [NSIndexPath indexPathForRow:logLines.count inSection:0];
     [logLines addObject:line];
@@ -185,20 +169,10 @@ static PLLogOutputView* current;
     });
 }
 
-+ (void)handleExitCode:(int)code {
-    if (!current) return;
-    
-    // 如果有错误，显示新的崩溃界面
-    if (code != 0) {
-        fatalErrorOccurred = YES;
-        canAppendToLog = NO;
-        [PLCrashView showWithExitCode:code];
-        return;
-    }
-    
-    // 退出代码为0时的降级处理（正常退出）
++ (BOOL)handleExitCode:(int)code {
+    if (!current) return NO;
     dispatch_async(dispatch_get_main_queue(), ^(void){
-        if (current.hidden) {
+        if (current.navController.view.hidden) {
             [current actionToggleLogOutput];
         }
         // Cleanup navigation bar
@@ -226,12 +200,13 @@ static PLLogOutputView* current;
             NSCharacterSet.newlineCharacterSet];
 
         // Print last 100 lines from latestlog.txt
-        for (int i = MAX(lines.count-100, 0); i < lines.count; i++) {
+        for (int i = (lines.count > 100) ? lines.count - 100 : 0; i < lines.count; i++) {
             [self _appendToLog:lines[i]];
         }
 
         fatalErrorOccurred = YES;
     });
+    return YES;
 }
 
 @end
