@@ -17,3 +17,4 @@ entitlements.codesign.xml
 $null
 /temp
 /docs
+.git-rewrite/
