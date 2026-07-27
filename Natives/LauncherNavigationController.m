@@ -678,9 +678,22 @@ static void *ProgressObserverContext = &ProgressObserverContext;
             NSData *scriptData = [NSData dataWithContentsOfFile:[NSBundle.mainBundle.bundlePath stringByAppendingPathComponent:@"UniversalJIT26.js"]];
             scriptDataString = [@"&script-data=" stringByAppendingString:[scriptData base64EncodedStringWithOptions:0]];
         }
-        [UIApplication.sharedApplication openURL:[NSURL URLWithString:[NSString stringWithFormat:@"stikjit://enable-jit?bundle-id=%@&pid=%d%@", NSBundle.mainBundle.bundleIdentifier, getpid(), scriptDataString]] options:@{} completionHandler:nil];
+        NSString *urlString = [NSString stringWithFormat:@"stikjit://enable-jit?bundle-id=%@&pid=%d%@", NSBundle.mainBundle.bundleIdentifier, getpid(), scriptDataString];
+        NSLog(@"[JIT] Opening URL: %@", urlString);
+        [[UIApplication sharedApplication] openURL:[NSURL URLWithString:urlString] options:@{} completionHandler:^(BOOL success) {
+            NSLog(@"[JIT] openURL result: %d", success);
+            if (!success) {
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    showDialog(@"JIT Error", [NSString stringWithFormat:@"Failed to open StikJIT URL.\n\nBundle: %@\nPID: %d\n\nIs StikJIT/StikDebug installed?", NSBundle.mainBundle.bundleIdentifier, getpid()]);
+                });
+            }
+        }];
     } else {
-        [UIApplication.sharedApplication openURL:[NSURL URLWithString:[NSString stringWithFormat:@"sidestore://sidejit-enable?pid=%d", getpid()]] options:@{} completionHandler:nil];
+        NSString *urlString = [NSString stringWithFormat:@"sidestore://sidejit-enable?pid=%d", getpid()];
+        NSLog(@"[JIT] Opening URL: %@", urlString);
+        [[UIApplication sharedApplication] openURL:[NSURL URLWithString:urlString] options:@{} completionHandler:^(BOOL success) {
+            NSLog(@"[JIT] openURL result: %d", success);
+        }];
     }
 
     self.progressText.text = localize(@"launcher.wait_jit.title", nil);
