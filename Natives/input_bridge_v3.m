@@ -14,7 +14,6 @@
 
 #include <assert.h>
 #include <dlfcn.h>
-#include <dlfcn.h>
 #include <libgen.h>
 #include <stdlib.h>
 #include <stdatomic.h>
@@ -224,54 +223,18 @@ void registerOpenHandler(JNIEnv *env) {
 
 // JNI_OnLoad
 void JNI_OnLoadGLFW() {
-    jclass glfwClass = (*runtimeJNIEnvPtr)->FindClass(runtimeJNIEnvPtr, "org/lwjgl/glfw/GLFW");
-    if (!glfwClass || (*runtimeJNIEnvPtr)->ExceptionCheck(runtimeJNIEnvPtr)) {
-        NSLog(@"[JNI_OnLoadGLFW] FATAL: FindClass(org/lwjgl/glfw/GLFW) failed! glfwClass=%p", glfwClass);
-        (*runtimeJNIEnvPtr)->ExceptionDescribe(runtimeJNIEnvPtr);
-        (*runtimeJNIEnvPtr)->ExceptionClear(runtimeJNIEnvPtr);
-        return;
-    }
-    vmGlfwClass = (*runtimeJNIEnvPtr)->NewGlobalRef(runtimeJNIEnvPtr, glfwClass);
-
+    vmGlfwClass = (*runtimeJNIEnvPtr)->NewGlobalRef(runtimeJNIEnvPtr, (*runtimeJNIEnvPtr)->FindClass(runtimeJNIEnvPtr, "org/lwjgl/glfw/GLFW"));
     method_internalWindowSizeChanged = (*runtimeJNIEnvPtr)->GetStaticMethodID(runtimeJNIEnvPtr, vmGlfwClass, "internalWindowSizeChanged", "(JII)V");
-    if (!method_internalWindowSizeChanged || (*runtimeJNIEnvPtr)->ExceptionCheck(runtimeJNIEnvPtr)) {
-        NSLog(@"[JNI_OnLoadGLFW] FATAL: GetStaticMethodID(internalWindowSizeChanged) failed! mid=%p", method_internalWindowSizeChanged);
-        (*runtimeJNIEnvPtr)->ExceptionDescribe(runtimeJNIEnvPtr);
-        (*runtimeJNIEnvPtr)->ExceptionClear(runtimeJNIEnvPtr);
-    }
-
     jfieldID field_keyDownBuffer = (*runtimeJNIEnvPtr)->GetStaticFieldID(runtimeJNIEnvPtr, vmGlfwClass, "keyDownBuffer", "Ljava/nio/ByteBuffer;");
-    if (!field_keyDownBuffer || (*runtimeJNIEnvPtr)->ExceptionCheck(runtimeJNIEnvPtr)) {
-        NSLog(@"[JNI_OnLoadGLFW] FATAL: GetStaticFieldID(keyDownBuffer) failed! fid=%p", field_keyDownBuffer);
-        (*runtimeJNIEnvPtr)->ExceptionDescribe(runtimeJNIEnvPtr);
-        (*runtimeJNIEnvPtr)->ExceptionClear(runtimeJNIEnvPtr);
-        return;
-    }
     jobject keyDownBufferJ = (*runtimeJNIEnvPtr)->GetStaticObjectField(runtimeJNIEnvPtr, vmGlfwClass, field_keyDownBuffer);
     keyDownBuffer = (*runtimeJNIEnvPtr)->GetDirectBufferAddress(runtimeJNIEnvPtr, keyDownBufferJ);
 }
 
 jint JNI_OnLoad(JavaVM* vm, void* reserved) {
-    static BOOL coreLibLoaded = NO;
     runtimeJavaVMPtr = vm;
 
     JNIEnv *env;
     (*runtimeJavaVMPtr)->GetEnv(runtimeJavaVMPtr, (void **)&env, JNI_VERSION_1_4);
-
-    // First call (for "lwjgl"): load liblwjgl.dylib to register core JNI methods.
-    // The dylib is in the .app bundle and is code-signed, so dlopen works even on TXM.
-    if (!coreLibLoaded) {
-        coreLibLoaded = YES;
-        NSString *frameworksPath = [NSString stringWithUTF8String:NSBundle.mainBundle.bundlePath.UTF8String ?: ""];
-        NSString *lwjglPath = [frameworksPath stringByAppendingPathComponent:@"Frameworks/liblwjgl.dylib"];
-        void *handle = dlopen(lwjglPath.UTF8String, RTLD_NOW | RTLD_GLOBAL);
-        if (handle) {
-            NSLog(@"[JNI_OnLoad] Loaded liblwjgl.dylib from bundle");
-        } else {
-            NSLog(@"[JNI_OnLoad] WARNING: dlopen liblwjgl.dylib failed: %s", dlerror());
-        }
-    }
-
     registerOpenHandler(env);
     if (!getenv("POJAV_SKIP_JNI_GLFW")) {
         runtimeJNIEnvPtr = env;
@@ -690,24 +653,6 @@ void CallbackBridge_nativeSendScreenSize(int width, int height) {
     }
     
     // return (isInputReady && (GLFW_invoke_FramebufferSize || GLFW_invoke_WindowSize));
-}
-
-// LWJGL core JNI methods — normally provided by liblwjgl.dylib, but on TXM devices
-// the dylib may fail to load (code signing), so we define them here to ensure
-// they are always available.
-JNIEXPORT jobject JNICALL Java_org_lwjgl_system_jni_JNINativeInterface_nNewDirectByteBuffer
-  (JNIEnv *env, jclass cls, jlong address, jlong capacity) {
-    return (*env)->NewDirectByteBuffer(env, (void *)(uintptr_t)address, capacity);
-}
-
-JNIEXPORT jlong JNICALL Java_org_lwjgl_system_jni_JNINativeInterface_nGetDirectBufferAddress
-  (JNIEnv *env, jclass cls, jobject buffer) {
-    return (jlong)(uintptr_t)(*env)->GetDirectBufferAddress(env, buffer);
-}
-
-JNIEXPORT jlong JNICALL Java_org_lwjgl_system_jni_JNINativeInterface_nGetDirectBufferCapacity
-  (JNIEnv *env, jclass cls, jobject buffer) {
-    return (*env)->GetDirectBufferCapacity(env, buffer);
 }
 
 void CallbackBridge_nativeSendScroll(CGFloat xoffset, CGFloat yoffset) {
