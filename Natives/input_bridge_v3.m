@@ -675,6 +675,24 @@ void CallbackBridge_nativeSendScreenSize(int width, int height) {
     // return (isInputReady && (GLFW_invoke_FramebufferSize || GLFW_invoke_WindowSize));
 }
 
+// LWJGL core JNI methods — normally provided by liblwjgl.dylib, but on TXM devices
+// the dylib may fail to load (code signing), so we define them here to ensure
+// they are always available.
+JNIEXPORT jobject JNICALL Java_org_lwjgl_system_jni_JNINativeInterface_nNewDirectByteBuffer
+  (JNIEnv *env, jclass cls, jlong address, jlong capacity) {
+    return (*env)->NewDirectByteBuffer(env, (void *)(uintptr_t)address, capacity);
+}
+
+JNIEXPORT jlong JNICALL Java_org_lwjgl_system_jni_JNINativeInterface_nGetDirectBufferAddress
+  (JNIEnv *env, jclass cls, jobject buffer) {
+    return (jlong)(uintptr_t)(*env)->GetDirectBufferAddress(env, buffer);
+}
+
+JNIEXPORT jlong JNICALL Java_org_lwjgl_system_jni_JNINativeInterface_nGetDirectBufferCapacity
+  (JNIEnv *env, jclass cls, jobject buffer) {
+    return (*env)->GetDirectBufferCapacity(env, buffer);
+}
+
 void CallbackBridge_nativeSendScroll(CGFloat xoffset, CGFloat yoffset) {
     if (GLFW_invoke_Scroll && isInputReady) {
         if (isUseStackQueueCall) {
