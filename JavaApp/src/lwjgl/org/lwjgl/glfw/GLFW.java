@@ -1357,4 +1357,13 @@ public class GLFW
         // Fast path, but will return true if one has the same prefix
         return glGetString(GL_EXTENSIONS).contains(ext);
     }
+
+    /**
+     * GLFW 3.4 platform-supported query. Minecraft 26.2's GLX._initGlfw
+     * calls this before glfwInit(). Pojav-iOS reports itself as X11
+     * (see glfwGetPlatform), so only X11 is supported here.
+     */
+    public static boolean glfwPlatformSupported(int platform) {
+        return platform == GLFW_PLATFORM_X11;
+    }
 }
