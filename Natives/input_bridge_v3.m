@@ -236,10 +236,13 @@ jint JNI_OnLoad(JavaVM* vm, void* reserved) {
     JNIEnv *env;
     (*runtimeJavaVMPtr)->GetEnv(runtimeJavaVMPtr, (void **)&env, JNI_VERSION_1_4);
     registerOpenHandler(env);
-    if (!getenv("POJAV_SKIP_JNI_GLFW")) {
-        runtimeJNIEnvPtr = env;
-        JNI_OnLoadGLFW();
-    }
+    // FIXME: JNI_OnLoadGLFW crashes in get_method_id on iOS 27 with TXM.
+    // Temporarily skip GLFW pre-registration to diagnose.
+    // GLFW methods will be resolved via dynamic JNI registration at call time.
+    // if (!getenv("POJAV_SKIP_JNI_GLFW")) {
+    //     runtimeJNIEnvPtr = env;
+    //     JNI_OnLoadGLFW();
+    // }
 
     return JNI_VERSION_1_4;
 }
