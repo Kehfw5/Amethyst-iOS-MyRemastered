@@ -309,11 +309,9 @@ int launchJVM(NSString *username, id launchTarget, int width, int height, int mi
     margv[++margc] = "-XX:+DisablePrimordialThreadGuardPages";
 
     // On iOS 26, use mirror mapped JIT by default
-    // FIXME: MirrorMappedCodeCache causes SIGSEGV in get_method_id on Java 25 + iOS 27
-    // Temporarily disabled to diagnose — JVM may fall back to interpreter-only mode
-    // if (@available(iOS 26.0, *)) {
-    //     margv[++margc] = "-XX:+MirrorMappedCodeCache";
-    // }
+    if (@available(iOS 26.0, *)) {
+        margv[++margc] = "-XX:+MirrorMappedCodeCache";
+    }
 
     // Disable Forge 1.16.x early progress window
     margv[++margc] = "-Dfml.earlyprogresswindow=false";
