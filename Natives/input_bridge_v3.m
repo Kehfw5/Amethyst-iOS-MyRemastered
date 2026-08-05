@@ -221,13 +221,92 @@ void registerOpenHandler(JNIEnv *env) {
     (*env)->RegisterNatives(env, cls, peerOpenMethods, 2);
 }
 
-// JNI_OnLoad
-void JNI_OnLoadGLFW() {
-    vmGlfwClass = (*runtimeJNIEnvPtr)->NewGlobalRef(runtimeJNIEnvPtr, (*runtimeJNIEnvPtr)->FindClass(runtimeJNIEnvPtr, "org/lwjgl/glfw/GLFW"));
-    method_internalWindowSizeChanged = (*runtimeJNIEnvPtr)->GetStaticMethodID(runtimeJNIEnvPtr, vmGlfwClass, "internalWindowSizeChanged", "(JII)V");
-    jfieldID field_keyDownBuffer = (*runtimeJNIEnvPtr)->GetStaticFieldID(runtimeJNIEnvPtr, vmGlfwClass, "keyDownBuffer", "Ljava/nio/ByteBuffer;");
-    jobject keyDownBufferJ = (*runtimeJNIEnvPtr)->GetStaticObjectField(runtimeJNIEnvPtr, vmGlfwClass, field_keyDownBuffer);
-    keyDownBuffer = (*runtimeJNIEnvPtr)->GetDirectBufferAddress(runtimeJNIEnvPtr, keyDownBufferJ);
+// runtimeJNIEnvPtr belongs to whichever thread loaded the library. Always
+// resolve an env for the calling thread, attaching it to the VM if needed.
+static JNIEnv* getThreadJNIEnv() {
+    if (runtimeJavaVMPtr == NULL) return NULL;
+    JNIEnv *env = NULL;
+    (*runtimeJavaVMPtr)->GetEnv(runtimeJavaVMPtr, (void **)&env, JNI_VERSION_1_4);
+    if (env == NULL) {
+        (*runtimeJavaVMPtr)->AttachCurrentThreadAsDaemon(runtimeJavaVMPtr, (void **)&env, NULL);
+    }
+    return env;
+}
+
+static void logPendingException(JNIEnv *env, const char *ctx) {
+    jthrowable exc = (*env)->ExceptionOccurred(env);
+    if (exc == NULL) return;
+    (*env)->ExceptionClear(env);
+    jclass throwableCls = (*env)->FindClass(env, "java/lang/Throwable");
+    if (throwableCls == NULL) { (*env)->ExceptionClear(env); return; }
+    jmethodID mToString = (*env)->GetMethodID(env, throwableCls, "toString", "()Ljava/lang/String;");
+    jmethodID mGetCause = (*env)->GetMethodID(env, throwableCls, "getCause", "()Ljava/lang/Throwable;");
+    jthrowable cur = exc;
+    for (int depth = 0; cur != NULL && depth < 5; depth++) {
+        jstring s = (jstring)(*env)->CallObjectMethod(env, cur, mToString);
+        if ((*env)->ExceptionOccurred(env)) { (*env)->ExceptionClear(env); break; }
+        if (s != NULL) {
+            const char *cs = (*env)->GetStringUTFChars(env, s, NULL);
+            NSLog(@"%s: %s%s", ctx, depth ? "caused by: " : "", cs);
+            (*env)->ReleaseStringUTFChars(env, s, cs);
+        }
+        cur = (jthrowable)(*env)->CallObjectMethod(env, cur, mGetCause);
+        if ((*env)->ExceptionOccurred(env)) { (*env)->ExceptionClear(env); break; }
+    }
+}
+
+// Lazily init GLFW bridge (adapted from Taylen-chud/Amethyst-iOS).
+// Called on first use rather than from JNI_OnLoad because JNI_OnLoad fires
+// while org.lwjgl.system.MemoryUtil is mid-init on Java 25, and eager
+// FindClass+GetStaticMethodID triggers a circular class-init SIGSEGV.
+void ensureGLFWBridge() {
+    if (vmGlfwClass != NULL) return;
+    static int attempts = 0;
+    if (attempts >= 8) return;
+    attempts++;
+    JNIEnv *env = getThreadJNIEnv();
+    if (env == NULL) return;
+    jclass localGlfwClass = (*env)->FindClass(env, "org/lwjgl/glfw/GLFW");
+    logPendingException(env, "ensureGLFWBridge: FindClass(GLFW) threw");
+    if (localGlfwClass == NULL) {
+        NSLog(@"ensureGLFWBridge: FindClass failed, retrying via system classloader");
+        jclass clCls = (*env)->FindClass(env, "java/lang/ClassLoader");
+        jclass classCls = (*env)->FindClass(env, "java/lang/Class");
+        if (clCls != NULL && classCls != NULL) {
+            jmethodID mSysCl = (*env)->GetStaticMethodID(env, clCls, "getSystemClassLoader", "()Ljava/lang/ClassLoader;");
+            jobject sysCl = (*env)->CallStaticObjectMethod(env, clCls, mSysCl);
+            jmethodID mForName = (*env)->GetStaticMethodID(env, classCls, "forName", "(Ljava/lang/String;ZLjava/lang/ClassLoader;)Ljava/lang/Class;");
+            jstring name = (*env)->NewStringUTF(env, "org.lwjgl.glfw.GLFW");
+            if (mSysCl != NULL && sysCl != NULL && mForName != NULL && name != NULL) {
+                localGlfwClass = (jclass)(*env)->CallStaticObjectMethod(env, classCls, mForName, name, JNI_FALSE, sysCl);
+            }
+            logPendingException(env, "ensureGLFWBridge: system classloader fallback threw");
+        } else {
+            (*env)->ExceptionClear(env);
+        }
+    }
+    if (localGlfwClass == NULL) {
+        NSLog(@"ensureGLFWBridge: FindClass(org/lwjgl/glfw/GLFW) failed, aborting GLFW native init");
+        return;
+    }
+    vmGlfwClass = (*env)->NewGlobalRef(env, localGlfwClass);
+
+    method_internalWindowSizeChanged = (*env)->GetStaticMethodID(env, vmGlfwClass, "internalWindowSizeChanged", "(JII)V");
+    if (method_internalWindowSizeChanged == NULL) {
+        (*env)->ExceptionDescribe(env);
+        (*env)->ExceptionClear(env);
+        NSLog(@"ensureGLFWBridge: GetStaticMethodID(internalWindowSizeChanged) failed");
+    }
+
+    jfieldID field_keyDownBuffer = (*env)->GetStaticFieldID(env, vmGlfwClass, "keyDownBuffer", "Ljava/nio/ByteBuffer;");
+    if (field_keyDownBuffer == NULL) {
+        (*env)->ExceptionDescribe(env);
+        (*env)->ExceptionClear(env);
+        NSLog(@"ensureGLFWBridge: GetStaticFieldID(keyDownBuffer) failed, aborting GLFW native init");
+        return;
+    }
+    jobject keyDownBufferJ = (*env)->GetStaticObjectField(env, vmGlfwClass, field_keyDownBuffer);
+    keyDownBuffer = (*env)->GetDirectBufferAddress(env, keyDownBufferJ);
 }
 
 jint JNI_OnLoad(JavaVM* vm, void* reserved) {
@@ -236,13 +315,10 @@ jint JNI_OnLoad(JavaVM* vm, void* reserved) {
     JNIEnv *env;
     (*runtimeJavaVMPtr)->GetEnv(runtimeJavaVMPtr, (void **)&env, JNI_VERSION_1_4);
     registerOpenHandler(env);
-    // FIXME: JNI_OnLoadGLFW crashes in get_method_id on iOS 27 with TXM.
-    // Temporarily skip GLFW pre-registration to diagnose.
-    // GLFW methods will be resolved via dynamic JNI registration at call time.
-    // if (!getenv("POJAV_SKIP_JNI_GLFW")) {
-    //     runtimeJNIEnvPtr = env;
-    //     JNI_OnLoadGLFW();
-    // }
+    // GLFW bridge setup is deferred to first use (ensureGLFWBridge).
+    // Doing it here can force org.lwjgl.glfw.GLFW.<clinit> while
+    // org.lwjgl.system.MemoryUtil is itself mid-init on this thread
+    // (Java 25 class-init deadlock → SIGSEGV in get_method_id).
 
     return JNI_VERSION_1_4;
 }
@@ -273,9 +349,13 @@ ADD_CALLBACK_WWIN(WindowSize)
 #undef ADD_CALLBACK_WWIN
 
 void handleFramebufferSizeJava(void* window, int w, int h) {
+    ensureGLFWBridge();
     if(GLFW_invoke_CursorEnter)GLFW_invoke_CursorEnter(window, 1);
     if(GLFW_invoke_WindowPos)GLFW_invoke_WindowPos(window, 0, 0);
-    (*runtimeJNIEnvPtr)->CallStaticVoidMethod(runtimeJNIEnvPtr, vmGlfwClass, method_internalWindowSizeChanged, (long)window, w, h);
+    if (vmGlfwClass && method_internalWindowSizeChanged) {
+        JNIEnv *env = getThreadJNIEnv();
+        if (env) (*env)->CallStaticVoidMethod(env, vmGlfwClass, method_internalWindowSizeChanged, (long)window, w, h);
+    }
 }
 
 void pojavPumpEvents(void* window) {
@@ -596,7 +676,8 @@ char getKeyModifiers(int key, int action) {
 }
 
 void CallbackBridge_nativeSendKey(int key, int scancode, int action, int mods) {
-    if (GLFW_invoke_Key && isInputReady) {
+    ensureGLFWBridge();
+    if (GLFW_invoke_Key && isInputReady && keyDownBuffer) {
         keyDownBuffer[MAX(0, key-31)]=(jbyte)action;
         if (mods == 0) {
             mods = getKeyModifiers(key, action);
