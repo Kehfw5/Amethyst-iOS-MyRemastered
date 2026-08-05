@@ -513,9 +513,16 @@ public class GLFW
     public static long mainContext = 0;
 
     static {
+        System.out.println("[GLFW] Loading AngelAuraAmethyst main binary for MC < 26.3-snapshot-4 (GLFW windowing backend)");
+        System.out.println("[GLFW] BUNDLE_PATH=" + System.getenv("BUNDLE_PATH"));
         try {
-            System.load(System.getenv("BUNDLE_PATH") + "/AngelAuraAmethyst");
+            String bundlePath = System.getenv("BUNDLE_PATH");
+            String binaryPath = bundlePath + "/AngelAuraAmethyst";
+            System.out.println("[GLFW] Loading: " + binaryPath);
+            System.load(binaryPath);
+            System.out.println("[GLFW] Main binary loaded successfully (pojav* EGL bridge functions available)");
         } catch (UnsatisfiedLinkError e) {
+            System.out.println("[GLFW] FATAL: Failed to load main binary: " + e);
             e.printStackTrace();
         }
         String[] size = System.getProperty("glfw.windowSize").split("x");
@@ -809,6 +816,41 @@ public class GLFW
         return GLFW_PLATFORM_X11;
     }
 
+    /**
+     * GLFW 3.4 added platform-supported queries. Minecraft 26.2's
+     * GLX._initGlfw calls glfwPlatformSupported(...) before glfwInit(),
+     * so without this method we fail with NoSuchMethodError. Pojav-iOS
+     * reports itself as X11 (see glfwGetPlatform above) — say so here
+     * and reject everything else.
+     */
+    public static boolean glfwPlatformSupported(int platform) {
+        return platform == GLFW_PLATFORM_X11;
+    }
+
+    // GLFW 3.4 IME / preedit callbacks. Minecraft 26.2's
+    // InputConstants.setupKeyboardCallbacks registers all three; Pojav-iOS
+    // doesn't pipe iOS IME events anywhere yet, so accept-and-discard is
+    // fine — the methods just need to exist so the method-resolution at
+    // class link time doesn't NoSuchMethodError. Returning null matches
+    // LWJGL's createSafe(0L) → null path when no previous callback was set.
+    public static @Nullable GLFWPreeditCallback glfwSetPreeditCallback(
+            @NativeType("GLFWwindow *") long window,
+            @Nullable @NativeType("GLFWpreeditfun") GLFWPreeditCallbackI cbfun) {
+        return null;
+    }
+
+    public static @Nullable GLFWIMEStatusCallback glfwSetIMEStatusCallback(
+            @NativeType("GLFWwindow *") long window,
+            @Nullable @NativeType("GLFWimestatusfun") GLFWIMEStatusCallbackI cbfun) {
+        return null;
+    }
+
+    public static @Nullable GLFWPreeditCandidateCallback glfwSetPreeditCandidateCallback(
+            @NativeType("GLFWwindow *") long window,
+            @Nullable @NativeType("GLFWpreeditcandidatefun") GLFWPreeditCandidateCallbackI cbfun) {
+        return null;
+    }
+
     @NativeType("GLFWwindow *")
     public static long glfwGetCurrentContext() {
         long __functionAddress = Functions.GetCurrentContext;
@@ -840,6 +882,12 @@ public class GLFW
     public static long glfwGetPrimaryMonitor() {
         // Prevent NULL check
         return 1L;
+    }
+
+    @Nullable
+    @NativeType("char const *")
+    public static String glfwGetMonitorName(@NativeType("GLFWmonitor *") long monitor) {
+        return "Primary Monitor";
     }
 
     public static void glfwGetMonitorPos(@NativeType("GLFWmonitor *") long monitor, @Nullable @NativeType("int *") IntBuffer xpos, @Nullable @NativeType("int *") IntBuffer ypos) {
@@ -1088,13 +1136,21 @@ public class GLFW
     public static void glfwPostEmptyEvent() {}
 
     public static int glfwGetInputMode(@NativeType("GLFWwindow *") long window, int mode) {
-        return internalGetWindow(window).inputModes.get(mode);
+        // Map.get returns null for unset modes, which auto-unboxing would
+        // turn into an NPE. MC 26.2's TextInputManager.tick polls
+        // glfwGetInputMode(window, GLFW_IME) every frame; that mode is
+        // never set on iOS (no IME wiring), so without this guard the
+        // first tick crashes. Return 0 (= GLFW_FALSE / "off") for any
+        // mode the window doesn't have a stored value for.
+        Integer value = internalGetWindow(window).inputModes.get(mode);
+        return value != null ? value : 0;
     }
 
     public static void glfwSetInputMode(@NativeType("GLFWwindow *") long window, int mode, int value) {
         if (mode == GLFW_CURSOR) {
             switch (value) {
                 case GLFW_CURSOR_DISABLED:
+                    net.kdt.pojavlaunch.uikit.UIKit.updateMCGuiScale();
                     CallbackBridge.nativeSetGrabbing(true);
                     break;
                 default: CallbackBridge.nativeSetGrabbing(false);
@@ -1356,14 +1412,5 @@ public class GLFW
         //return Arrays.stream(glGetString(GL_EXTENSIONS).split(" ")).anyMatch(ext::equals);
         // Fast path, but will return true if one has the same prefix
         return glGetString(GL_EXTENSIONS).contains(ext);
-    }
-
-    /**
-     * GLFW 3.4 platform-supported query. Minecraft 26.2's GLX._initGlfw
-     * calls this before glfwInit(). Pojav-iOS reports itself as X11
-     * (see glfwGetPlatform), so only X11 is supported here.
-     */
-    public static boolean glfwPlatformSupported(int platform) {
-        return platform == GLFW_PLATFORM_X11;
     }
 }
