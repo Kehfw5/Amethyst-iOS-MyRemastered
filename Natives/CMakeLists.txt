@@ -588,7 +588,6 @@ target_link_libraries(AngelAuraAmethyst
   ${TERRACOTTA_LIB}
   "-lc++"
   "-lresolv"
-  "${CMAKE_CURRENT_LIST_DIR}/resources/Frameworks/liblwjgl.dylib"
 )
 set_target_properties(AngelAuraAmethyst PROPERTIES
   MACOSX_BUNDLE TRUE
