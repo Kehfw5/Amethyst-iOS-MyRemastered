@@ -827,30 +827,6 @@ public class GLFW
         return platform == GLFW_PLATFORM_X11;
     }
 
-    // GLFW 3.4 IME / preedit callbacks. Minecraft 26.2's
-    // InputConstants.setupKeyboardCallbacks registers all three; Pojav-iOS
-    // doesn't pipe iOS IME events anywhere yet, so accept-and-discard is
-    // fine — the methods just need to exist so the method-resolution at
-    // class link time doesn't NoSuchMethodError. Returning null matches
-    // LWJGL's createSafe(0L) → null path when no previous callback was set.
-    public static @Nullable GLFWPreeditCallback glfwSetPreeditCallback(
-            @NativeType("GLFWwindow *") long window,
-            @Nullable @NativeType("GLFWpreeditfun") GLFWPreeditCallbackI cbfun) {
-        return null;
-    }
-
-    public static @Nullable GLFWIMEStatusCallback glfwSetIMEStatusCallback(
-            @NativeType("GLFWwindow *") long window,
-            @Nullable @NativeType("GLFWimestatusfun") GLFWIMEStatusCallbackI cbfun) {
-        return null;
-    }
-
-    public static @Nullable GLFWPreeditCandidateCallback glfwSetPreeditCandidateCallback(
-            @NativeType("GLFWwindow *") long window,
-            @Nullable @NativeType("GLFWpreeditcandidatefun") GLFWPreeditCandidateCallbackI cbfun) {
-        return null;
-    }
-
     @NativeType("GLFWwindow *")
     public static long glfwGetCurrentContext() {
         long __functionAddress = Functions.GetCurrentContext;
